@@ -1,0 +1,12 @@
+{
+  "mp": "interop-master-密码-42",
+  "salt_auth_b64": "iHCKQz8zn9JGODIBNpyFYg==",
+  "salt_enc_b64": "lSnt86zmmA2q4JKzE//mRw==",
+  "auth_proof_key_hex": "96c5f334a0cfdedffe91c98025b23e68463cde22f4420eee75dcca9694d7150e",
+  "local_check_ct_b64": "YiT4cwMHDMOxp0R/tl31WuNtKfWXU/qKgEmwKVRvPiwr4Z1BuvPTXj2o",
+  "recipient_priv_b64": "2JKEWUXlUYxYeREuvoCA47N//wfR4L7/dWJdIsR8Yjc=",
+  "recipient_pub_b64": "HKNXAtKMmZ009U40IeqWN07oYSz30YVmRLcotVxfByk=",
+  "ecies_aad": "kb:org-delegate:interop-user",
+  "ecies_plain": "interop-plaintext-跨语言验证",
+  "ecies_ct_b64": "DJyP1Rw+w6YD/ZWS8REn8JRY0s7WmyxV5LxWOjChh2FL5p4Alh+sqiF4Ke2sAT12HcbK67SIEneDebjXosV07zudpXl8GEddwotBldkGWcQFSz67Arib0d8seHJi"
+}

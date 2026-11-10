@@ -1,0 +1,91 @@
+# 私有知识库与密钥管理系统 — 单机编排（设计 10.1：合计约 2GB 预算）
+# 用法：cp .env.example .env && 修改密钥项 → docker compose up -d --build
+name: kb
+
+x-app-env: &app-env
+  REDIS_URL: redis://redis:6379/0
+  DATA_DIR: /data
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_USER: ${POSTGRES_USER:-kb}
+  DB_PASS: ${POSTGRES_PASSWORD:?请在 .env 设置}
+  DB_NAME: ${POSTGRES_DB:-kb}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+  EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+  EMBEDDING_DIM: ${EMBEDDING_DIM:-512}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置}
+      POSTGRES_DB: ${POSTGRES_DB:-kb}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL",
+             "pg_isready -U ${POSTGRES_USER:-kb} -d ${POSTGRES_DB:-kb}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "96mb",
+              "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 128m
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      <<: *app-env
+      COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      ENABLE_HSTS: "${ENABLE_HSTS:-true}"
+      LLM_API_BASE: ${LLM_API_BASE:?请在 .env 设置}
+      LLM_API_KEY: ${LLM_API_KEY:?请在 .env 设置}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      DIFY_SERVICE_KEY: ${DIFY_SERVICE_KEY:-}
+    volumes:
+      - appdata:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    mem_limit: 512m
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.worker
+    environment:
+      <<: *app-env
+    volumes:
+      - appdata:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 768m
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  appdata:

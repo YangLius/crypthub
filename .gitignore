@@ -1,0 +1,29 @@
+# 密钥与配置
+.env
+*.pass
+backup.pass
+org-recovery-package*.json
+recovered.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 运行数据
+data/
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# vitest 输出
+.vitest/

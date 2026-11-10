@@ -1,0 +1,14 @@
+# worker 镜像：解析 + embedding（含本地 BGE 模型运行时；预算 768MB —— 设计 10.1）
+# docker build -f backend/Dockerfile.worker -t kb-worker .
+FROM python:3.13-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install -r requirements.txt && \
+    pip install "sentence-transformers==3.*" "psycopg[binary]==3.*"
+
+COPY backend/app ./app
+COPY backend/scripts ./scripts
+
+CMD ["python", "-m", "app.worker"]
