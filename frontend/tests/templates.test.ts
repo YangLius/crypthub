@@ -38,7 +38,9 @@ describe("guessTemplate 按已填字段自动归类", () => {
   const c = (p: Partial<SecretContent>): SecretContent => p;
 
   it("用户名+密码 → login", () => {
-    expect(guessTemplate(c({ username: "admin", password: "x" }))).toBe("login");
+    expect(guessTemplate(c({ username: "admin", password: "x" }))).toBe(
+      "login",
+    );
   });
 
   it("网址+用户名+密码 → web", () => {
@@ -48,9 +50,9 @@ describe("guessTemplate 按已填字段自动归类", () => {
   });
 
   it("地址+密码（无用户名）→ middleware", () => {
-    expect(guessTemplate(c({ url: "redis.internal:6379", password: "p" }))).toBe(
-      "middleware",
-    );
+    expect(
+      guessTemplate(c({ url: "redis.internal:6379", password: "p" })),
+    ).toBe("middleware");
   });
 
   it("裸 token（sk-）→ apikey；PEM 私钥 → cert", () => {

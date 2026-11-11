@@ -99,6 +99,18 @@ interface Grant {
 interface SecretFull extends SecretRow {
   my_wrapped_dek: string;
 }
+
+/** 环境选项：值保持 prod/staging/dev 稳定标识，展示用中文。 */
+const ENV_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "未指定" },
+  { value: "prod", label: "生产" },
+  { value: "staging", label: "预发" },
+  { value: "dev", label: "开发" },
+];
+
+function envLabel(v: string): string {
+  return ENV_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
 interface PendingRow {
   id: string;
   slug: string;
@@ -401,7 +413,7 @@ function SecretList(props: {
                 <td>
                   {r.env ? (
                     <Badge tone={r.env === "prod" ? "err" : "info"}>
-                      {r.env}
+                      {envLabel(r.env)}
                     </Badge>
                   ) : (
                     "—"
@@ -878,10 +890,11 @@ function ImportModal({
                 disabled={busy}
                 onChange={(e) => setEnv(e.target.value)}
               >
-                <option value="">未指定</option>
-                <option value="prod">prod</option>
-                <option value="staging">staging</option>
-                <option value="dev">dev</option>
+                {ENV_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </Field>
           </div>
@@ -1020,10 +1033,11 @@ function CreateModal({
         </Field>
         <Field label="环境">
           <select value={env} onChange={(e) => setEnv(e.target.value)}>
-            <option value="">未指定</option>
-            <option value="prod">prod</option>
-            <option value="staging">staging</option>
-            <option value="dev">dev</option>
+            {ENV_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </Field>
       </div>
@@ -1381,7 +1395,9 @@ function ViewModal({
       <div className="toolbar" style={{ marginBottom: 10 }}>
         <Badge tone="info">v{row.version}</Badge>
         {row.env && (
-          <Badge tone={row.env === "prod" ? "err" : "info"}>{row.env}</Badge>
+          <Badge tone={row.env === "prod" ? "err" : "info"}>
+            {envLabel(row.env)}
+          </Badge>
         )}
         {row.project && <Badge>{row.project}</Badge>}
         {(row.tags ?? []).map((t) => (
