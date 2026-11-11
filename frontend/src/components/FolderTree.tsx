@@ -15,7 +15,10 @@ export interface Folder {
   name: string;
 }
 
-export function useFolders(kind: "doc" | "secret", reloadKey: number): Folder[] {
+export function useFolders(
+  kind: "doc" | "secret",
+  reloadKey: number,
+): Folder[] {
   const [folders, setFolders] = useState<Folder[]>([]);
   useEffect(() => {
     let alive = true;
@@ -24,9 +27,7 @@ export function useFolders(kind: "doc" | "secret", reloadKey: number): Folder[] 
       .then((r) => {
         if (alive) setFolders(r.folders);
       })
-      .catch((e) =>
-        toastErr(e instanceof Error ? e.message : "目录加载失败"),
-      );
+      .catch((e) => toastErr(e instanceof Error ? e.message : "目录加载失败"));
     return () => {
       alive = false;
     };
@@ -123,7 +124,10 @@ export function FolderTree({
     const name = window.prompt("新的目录名", f.name);
     if (name === null || name.trim() === "" || name === f.name) return;
     try {
-      await api.patch(`/folders/${f.id}`, { name: name.trim(), parent_id: f.parent_id });
+      await api.patch(`/folders/${f.id}`, {
+        name: name.trim(),
+        parent_id: f.parent_id,
+      });
       onMutate();
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "重命名失败");
@@ -204,8 +208,7 @@ export function FolderTree({
             </button>
           </span>
         </div>
-        {expanded &&
-          kids.map((k) => renderNode(k, depth + 1))}
+        {expanded && kids.map((k) => renderNode(k, depth + 1))}
         {creating?.parentId === f.id && renderCreateInput(depth + 1)}
       </div>
     );
@@ -246,9 +249,7 @@ export function FolderTree({
         </Button>
       </div>
       {creating?.parentId === null && renderCreateInput(0)}
-      <div
-        className={`folder-row${selected === null ? " active" : ""}`}
-      >
+      <div className={`folder-row${selected === null ? " active" : ""}`}>
         <button
           type="button"
           className="folder-name"
@@ -258,9 +259,7 @@ export function FolderTree({
         </button>
       </div>
       {rootLabel && (
-        <div
-          className={`folder-row${selected === "root" ? " active" : ""}`}
-        >
+        <div className={`folder-row${selected === "root" ? " active" : ""}`}>
           <button
             type="button"
             className="folder-name"

@@ -336,9 +336,7 @@ def main() -> int:
     sub_folder = (r.json().get("folder") or {}).get("id", "")
     step("folders: 建子目录", r.status_code == 200 and bool(sub_folder))
 
-    r = c.patch(
-        f"/folders/{doc_folder}", json={"name": "运维文档", "parent_id": None}
-    )
+    r = c.patch(f"/folders/{doc_folder}", json={"name": "运维文档", "parent_id": None})
     step("folders: 重命名", r.status_code == 200)
 
     r = c.post(

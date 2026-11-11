@@ -139,7 +139,9 @@ async def create_folder(body: FolderBody, request: Request):
         depth = await _depth_of(str(parent["id"]))
         if depth + 1 > MAX_DEPTH:
             raise HTTPException(400, f"目录层级不能超过 {MAX_DEPTH} 级")
-    if await _sibling_exists(body.kind, name, body.parent_id or None, str(ctx.user["id"])):
+    if await _sibling_exists(
+        body.kind, name, body.parent_id or None, str(ctx.user["id"])
+    ):
         raise HTTPException(400, "同级目录下已存在同名目录")
     row = await db.execute_returning(
         "INSERT INTO folders (kind, parent_id, name, owner_id)"

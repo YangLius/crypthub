@@ -6,7 +6,7 @@ import contextlib
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +22,35 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+# 前端 SPA 路由与 API 前缀存在同名冲突（/secrets /search /chat /admin /audit）。
+# API 路由先注册会抢先命中浏览器导航，导致 F5 刷新直接吐裸 JSON/405。
+# 处理：中间件在路由匹配前拦截——浏览器导航（Accept 含 text/html）直接回 SPA；
+# fetch/XHR 的 Accept 是 */*，不受影响，照常命中 API。
+_FRONTEND_ROUTES = {
+    "/login",
+    "/setup",
+    "/docs",
+    "/chat",
+    "/search",
+    "/secrets",
+    "/admin",
+    "/audit",
+}
+
+
+@app.middleware("http")
+async def _spa_navigation_preempt(request: Request, call_next):
+    if (
+        request.method == "GET"
+        and request.url.path in _FRONTEND_ROUTES
+        and "text/html" in request.headers.get("accept", "")
+    ):
+        index = _DIST / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+    return await call_next(request)
+
 
 app.include_router(auth.router)
 app.include_router(admin.router)

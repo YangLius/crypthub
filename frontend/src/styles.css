@@ -557,6 +557,54 @@ textarea {
 .folder-item:hover {
   background: color-mix(in srgb, var(--line) 40%, transparent);
 }
+
+/* 密钥批量导入预览列表 */
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 40vh;
+  overflow: auto;
+  margin: 4px 0 12px;
+}
+.import-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.import-item:hover {
+  background: color-mix(in srgb, var(--line) 30%, transparent);
+}
+.import-name {
+  font-weight: 600;
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-chips {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.import-chips .badge {
+  font-size: 11px;
+}
+.import-preview {
+  color: var(--muted, #888);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
 @media (max-width: 900px) {
   .with-folder-panel {
     flex-direction: column-reverse;

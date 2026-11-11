@@ -26,12 +26,27 @@ import {
   aeadOpen,
 } from "../crypto/core";
 import { toast, toastErr, useApp } from "../store";
-import { Badge, Button, Empty, Field, Modal, Spinner } from "../components/ui";
+import {
+  Badge,
+  Button,
+  Empty,
+  Field,
+  Modal,
+  SecretHint,
+  Spinner,
+} from "../components/ui";
 import {
   FolderPickerModal,
   FolderTree,
   type FolderSel,
 } from "../components/FolderTree";
+import {
+  clampEntries,
+  IMPORT_MAX_ENTRIES,
+  parseImportFile,
+  type ParseResult,
+  type ParsedEntry,
+} from "../secrets/importer";
 
 interface SecretRow {
   id: string;
@@ -267,6 +282,7 @@ function SecretList(props: {
     activeFolder,
   } = props;
   const [creating, setCreating] = useState<PendingRow | null>(null);
+  const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState<SecretFull | null>(null);
   const [moving, setMoving] = useState<SecretRow | null>(null);
 
@@ -352,7 +368,11 @@ function SecretList(props: {
                   >
                     查看
                   </Button>
-                  <Button kind="ghost" title="归档到我的目录" onClick={() => setMoving(r)}>
+                  <Button
+                    kind="ghost"
+                    title="归档到我的目录"
+                    onClick={() => setMoving(r)}
+                  >
                     移动
                   </Button>
                 </td>
@@ -390,6 +410,9 @@ function SecretList(props: {
         <span style={{ flex: 1 }} />
         <Button kind="primary" onClick={() => setCreating(null)}>
           ＋ 新建条目
+        </Button>
+        <Button title="从 .env/.txt/.csv/.json/.xlsx 文件批量解析导入" onClick={() => setImporting(true)}>
+          从文件导入
         </Button>
       </div>
 
@@ -493,11 +516,306 @@ function SecretList(props: {
           onPick={(target) => void moveRow(moving, target)}
         />
       )}
+
+      {importing && (
+        <ImportModal
+          myUserId={me.user_id}
+          defaultFolder={activeFolder}
+          onClose={() => setImporting(false)}
+          onDone={() => {
+            setImporting(false);
+            void refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /* ================= 创建 ================= */
+
+/* ================= 创建 / 批量导入 ================= */
+
+/** 创建一条密钥（客户端加密：内容密文 + DEK 双重包装）。返回服务端 id。 */
+async function createSecretRow(args: {
+  myUserId: string;
+  myPubkey: string;
+  orgPub: string;
+  name: string;
+  project: string;
+  env: string;
+  tags: string[];
+  content: SecretContent;
+  folderId?: string; // uuid；导入/目录内新建时归档到该目录
+}): Promise<string> {
+  // 客户端生成 id → 所有密文（内容/owner 包装/组织包装）预先绑定该 id
+  const sid = newSecretId();
+  const dek = newDek();
+  await api.post<{ id: string }>("/secrets", {
+    id: sid,
+    name: args.name,
+    project: args.project,
+    env: args.env,
+    tags: args.tags,
+    content_ct: encryptContent(dek, args.content, sid),
+    dek_wrapped_org: sealDekForOrg(args.orgPub, dek, sid),
+    grants: [
+      {
+        user_id: args.myUserId,
+        wrapped_dek: sealDekForUser(args.myPubkey, dek, sid, args.myUserId),
+      },
+    ],
+  });
+  if (args.folderId) {
+    await api
+      .patch(`/secrets/${sid}/folder`, { folder_id: args.folderId })
+      .catch(() => {});
+  }
+  return sid;
+}
+
+/** 从文件解析结果勾选导入（逐条加密上传，带进度；复用 createSecretRow 的加密链路） */
+function ImportModal({
+  myUserId,
+  defaultFolder,
+  onClose,
+  onDone,
+}: {
+  myUserId: string;
+  defaultFolder: FolderSel;
+  onClose: () => void;
+  onDone: (imported: number) => void;
+}) {
+  const { me } = useApp();
+  const [parsed, setParsed] = useState<ParseResult | null>(null);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [project, setProject] = useState("");
+  const [env, setEnv] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+    failed: number;
+  } | null>(null);
+  const [orgPub, setOrgPub] = useState("");
+  const [fileErr, setFileErr] = useState("");
+
+  useEffect(() => {
+    api
+      .get<{ org_pubkey: string }>("/admin/recovery/status")
+      .then((r) => setOrgPub(r.org_pubkey ?? ""))
+      .catch(() => setOrgPub(""));
+  }, []);
+
+  const onFile = async (f: File) => {
+    setFileErr("");
+    try {
+      const res = await parseImportFile(f);
+      const { result, clamped } = clampEntries(res);
+      if (!result.entries.length) {
+        setFileErr(
+          `未能从文件解析出条目（${result.format}，跳过 ${result.skipped} 行）。支持：.env/.txt（空行分块或 KEY=VALUE）、.csv（带表头）、.json、.xlsx`,
+        );
+        setParsed(null);
+        return;
+      }
+      setParsed(result);
+      setChecked(new Set(result.entries.map((_, i) => i)));
+      if (clamped > 0)
+        toastErr(`条目超过 ${IMPORT_MAX_ENTRIES} 上限，仅导入前 ${IMPORT_MAX_ENTRIES} 条`);
+    } catch (e) {
+      setFileErr(e instanceof Error ? e.message : "解析失败");
+      setParsed(null);
+    }
+  };
+
+  const doImport = async () => {
+    if (!me?.public_key || !orgPub) {
+      toastErr("缺少自己的公钥或组织公钥");
+      return;
+    }
+    const idxs = [...checked].sort((a, b) => a - b);
+    if (!idxs.length) {
+      toastErr("请至少勾选一条");
+      return;
+    }
+    setBusy(true);
+    setProgress({ done: 0, total: idxs.length, failed: 0 });
+    let failed = 0;
+    for (let i = 0; i < idxs.length; i++) {
+      const e: ParsedEntry = parsed!.entries[idxs[i]];
+      try {
+        await createSecretRow({
+          myUserId,
+          myPubkey: me.public_key,
+          orgPub,
+          name: e.name,
+          project,
+          env,
+          tags: [],
+          content: e.content,
+          folderId:
+            defaultFolder && defaultFolder !== "root" ? defaultFolder : undefined,
+        });
+      } catch {
+        failed++;
+      }
+      setProgress({ done: i + 1, total: idxs.length, failed });
+    }
+    setBusy(false);
+    const ok = idxs.length - failed;
+    if (ok > 0) {
+      toast(
+        failed
+          ? `导入完成：成功 ${ok} 条，失败 ${failed} 条`
+          : `已导入 ${ok} 条（内容仅存密文）`,
+      );
+      onDone(ok);
+    } else {
+      toastErr(`全部失败（${failed} 条），请检查网络后重试`);
+    }
+  };
+
+  const fieldChips = (c: SecretContent): string[] =>
+    [
+      c.username ? "账号" : "",
+      c.password ? "密码" : "",
+      c.url ? "地址" : "",
+      c.tokens ? "令牌" : "",
+      c.notes ? "备注" : "",
+    ].filter(Boolean);
+
+  const allChecked = parsed !== null && checked.size === parsed.entries.length;
+
+  return (
+    <Modal
+      title="从文件导入密钥"
+      onClose={busy ? () => {} : onClose}
+    >
+      <div className="secret-hint">
+        解析在本机浏览器完成，<b>文件不会上传</b>；每条条目加密后逐条创建。
+        名称/项目/环境为明文元数据，勾选确认后才会写入。
+      </div>
+      <Field label="选择文件（.env / .txt / .csv / .json / .xlsx，≤ 2MB）">
+        <input
+          type="file"
+          accept=".env,.txt,.csv,.tsv,.json,.md,.conf,.ini,.properties,.xlsx"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onFile(f);
+          }}
+        />
+      </Field>
+      {fileErr && <SecretHint>{fileErr}</SecretHint>}
+
+      {parsed && (
+        <>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              margin: "4px 0 8px",
+            }}
+          >
+            <span className="auth-sub">
+              {parsed.format} · 解析到 {parsed.entries.length} 条
+              {parsed.skipped > 0 ? `（跳过 ${parsed.skipped} 行）` : ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button
+              kind="ghost"
+              onClick={() =>
+                setChecked(
+                  allChecked
+                    ? new Set()
+                    : new Set(parsed.entries.map((_, i) => i)),
+                )
+              }
+            >
+              {allChecked ? "全不选" : "全选"}
+            </Button>
+          </div>
+
+          <div className="import-list">
+            {parsed.entries.map((e, i) => (
+              <label key={i} className="import-item">
+                <input
+                  type="checkbox"
+                  checked={checked.has(i)}
+                  disabled={busy}
+                  onChange={(ev) => {
+                    const next = new Set(checked);
+                    if (ev.target.checked) next.add(i);
+                    else next.delete(i);
+                    setChecked(next);
+                  }}
+                />
+                <span className="import-name" title={e.name}>
+                  {e.name}
+                </span>
+                <span className="import-chips">
+                  {fieldChips(e.content).map((c) => (
+                    <span key={c} className="badge">
+                      {c}
+                    </span>
+                  ))}
+                </span>
+                <span className="import-preview" title={e.content.notes ?? ""}>
+                  {e.content.notes
+                    ? e.content.notes.slice(0, 30) +
+                      (e.content.notes.length > 30 ? "…" : "")
+                    : ""}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div className="row">
+            <Field label="项目（应用到全部）">
+              <input
+                type="text"
+                value={project}
+                disabled={busy}
+                onChange={(e) => setProject(e.target.value)}
+              />
+            </Field>
+            <Field label="环境（应用到全部）">
+              <select
+                value={env}
+                disabled={busy}
+                onChange={(e) => setEnv(e.target.value)}
+              >
+                <option value="">未指定</option>
+                <option value="prod">prod</option>
+                <option value="staging">staging</option>
+                <option value="dev">dev</option>
+              </select>
+            </Field>
+          </div>
+
+          {progress && (
+            <p className="auth-sub">
+              正在加密上传… {progress.done}/{progress.total}
+              {progress.failed > 0 ? `（失败 ${progress.failed}）` : ""}
+            </p>
+          )}
+
+          <Button
+            kind="primary"
+            disabled={busy || checked.size === 0}
+            onClick={() => void doImport()}
+          >
+            {busy
+              ? `导入中（${progress?.done ?? 0}/${progress?.total ?? 0}）…`
+              : `加密并导入勾选的 ${checked.size} 条`}
+          </Button>
+        </>
+      )}
+    </Modal>
+  );
+}
 
 function CreateModal({
   myUserId,
@@ -539,11 +857,10 @@ function CreateModal({
     }
     setBusy(true);
     try {
-      // 客户端生成 id → 所有密文（内容/owner 包装/组织包装）预先绑定该 id
-      const sid = newSecretId();
-      const dek = newDek();
-      await api.post<{ id: string }>("/secrets", {
-        id: sid,
+      const sid = await createSecretRow({
+        myUserId,
+        myPubkey: me.public_key,
+        orgPub,
         name,
         project,
         env,
@@ -551,14 +868,7 @@ function CreateModal({
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
-        content_ct: encryptContent(dek, content, sid),
-        dek_wrapped_org: sealDekForOrg(orgPub, dek, sid),
-        grants: [
-          {
-            user_id: myUserId,
-            wrapped_dek: sealDekForUser(me.public_key, dek, sid, myUserId),
-          },
-        ],
+        content,
       });
       toast("已创建（内容仅存密文）");
       onDone(sid);

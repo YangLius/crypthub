@@ -30,7 +30,9 @@ class DocUpdateBody(BaseModel):
     project: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=20)
     secret_ref: str | None = Field(default=None, max_length=64)
-    folder_id: str | None = Field(default=None, max_length=64)  # None=不改动；"root"=移回根
+    folder_id: str | None = Field(
+        default=None, max_length=64
+    )  # None=不改动；"root"=移回根
 
 
 def _parse_tags(raw: str | None) -> list[str]:

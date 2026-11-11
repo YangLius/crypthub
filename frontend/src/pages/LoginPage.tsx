@@ -92,9 +92,10 @@ export default function LoginPage() {
     );
   }
 
-  return (
-    <div className="auth-wrap">
-      {needsBootstrap && (
+  // 互斥展示：未初始化 → 只显示引导卡片；已初始化 → 只显示登录表单
+  if (needsBootstrap) {
+    return (
+      <div className="auth-wrap">
         <div className="card auth-card">
           <h2 className="auth-title">🚀 系统尚未初始化</h2>
           <p className="auth-sub">
@@ -124,11 +125,13 @@ export default function LoginPage() {
           >
             {bootBusy ? "创建中…" : "初始化系统（进入主密码设置）"}
           </Button>
-          <p className="auth-sub" style={{ marginTop: 8 }}>
-            系统已有账号？下方登录即可。
-          </p>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="auth-wrap">
       <div className="card auth-card">
         <h2 className="auth-title">📚 知识库 · 密钥管理</h2>
         <p className="auth-sub">公司内部系统 · 零知识架构：主密码不离开本机</p>
