@@ -15,10 +15,17 @@ export interface PendingItem {
   kind: string;
 }
 
+/** 命中详情：value 仅存本机 sessionStorage 供认领回填，绝不发给服务端 */
+export interface ResolvedPending extends PendingItem {
+  value: string;
+}
+
 export interface RedactResult {
   text: string;
   pending: PendingItem[];
   hits: Hit[];
+  /** 与 pending 一一对应，额外携带原文 value（只进本机缓存） */
+  resolved: ResolvedPending[];
 }
 
 const PREFIXES = [
@@ -158,19 +165,21 @@ function randomSlug(): string {
 /** 用占位符替换全部命中（调用前应让用户逐条确认）。 */
 export function redactAll(text: string): RedactResult {
   const hits = scan(text);
-  if (!hits.length) return { text, pending: [], hits };
+  if (!hits.length) return { text, pending: [], hits, resolved: [] };
   const out: string[] = [];
   let pos = 0;
   const pending: PendingItem[] = [];
+  const resolved: ResolvedPending[] = [];
   for (const h of hits) {
     out.push(text.slice(pos, h.start));
     const slug = randomSlug();
     out.push("{{secret:" + slug + "}}");
     pending.push({ slug, kind: h.kind });
+    resolved.push({ slug, kind: h.kind, value: h.value });
     pos = h.end;
   }
   out.push(text.slice(pos));
-  return { text: out.join(""), pending, hits };
+  return { text: out.join(""), pending, hits, resolved };
 }
 
 export function isTextLike(filename: string, mime: string): boolean {

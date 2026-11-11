@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { isTextLike, redactAll, scan, type Hit } from "../gates/redact";
+import { savePrescanHits } from "../secrets/prescanCache";
 import { toast, toastErr } from "../store";
 import {
   Badge,
@@ -142,6 +143,8 @@ export default function DocsPage() {
       return;
     }
     const rd = redactAll(scanning.text);
+    // 命中原文只存本机 sessionStorage，供密钥区“新建并认领”时回填；绝不发给服务端
+    savePrescanHits(rd.resolved, meta.title || scanning.file.name, meta.project);
     const redactedFile = new File([rd.text], scanning.file.name, {
       type: "text/plain",
       lastModified: scanning.file.lastModified,

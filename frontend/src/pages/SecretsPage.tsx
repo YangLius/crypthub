@@ -27,6 +27,12 @@ import {
 } from "../crypto/core";
 import { toast, toastErr, useApp } from "../store";
 import {
+  peekPrescanHit,
+  removePrescanHit,
+  suggestFields,
+  type CachedHit,
+} from "../secrets/prescanCache";
+import {
   Badge,
   Button,
   Empty,
@@ -489,12 +495,12 @@ function SecretList(props: {
                 .catch(() => {});
             }
             void refresh();
-            const target = pending[0];
-            if (target && sid) {
-              void api.post(`/secrets/pending/${target.id}/claim`, {
+            // 只认领“正在认领”的那条 pending（此前误认领 pending[0]，会张冠李戴）
+            if (sid && creating) {
+              void api.post(`/secrets/pending/${creating.id}/claim`, {
                 secret_id: sid,
               });
-              onPendingChange(pending.filter((x) => x.id !== target.id));
+              onPendingChange(pending.filter((x) => x.id !== creating.id));
             }
           }}
         />
@@ -834,12 +840,25 @@ function CreateModal({
 }) {
   const { me } = useApp();
   const [name, setName] = useState(
-    pendingRow ? `凭据（${pendingRow.slug.slice(0, 6)}…）` : "",
+    pendingRow?.doc_title ??
+      (pendingRow ? `凭据（${pendingRow.slug.slice(0, 6)}…）` : ""),
   );
   const [project, setProject] = useState("");
   const [env, setEnv] = useState("");
   const [tags, setTags] = useState("");
   const [content, setContent] = useState<SecretContent>({ ...EMPTY_CONTENT });
+  const [cachedHit, setCachedHit] = useState<CachedHit | null>(null);
+
+  // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段
+  useEffect(() => {
+    if (!pendingRow) return;
+    const hit = peekPrescanHit(pendingRow.slug);
+    if (!hit) return;
+    setCachedHit(hit);
+    if (hit.title) setName(hit.title);
+    if (hit.project) setProject(hit.project);
+    setContent((c) => ({ ...c, ...suggestFields(hit) }));
+  }, [pendingRow]);
   const [busy, setBusy] = useState(false);
   const [orgPub, setOrgPub] = useState("");
 
@@ -874,6 +893,7 @@ function CreateModal({
           .filter(Boolean),
         content,
       });
+      if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       toast("已创建（内容仅存密文）");
       onDone(sid);
     } catch (e) {
@@ -892,7 +912,9 @@ function CreateModal({
           <>
             {" "}
             认领占位符：<code>{`{{secret:${pendingRow.slug}}}`}</code>
-            （真实凭据值请凭记忆填入下方，与文档被替换处对应）
+            {cachedHit
+              ? "（已自动填入上传预扫时的命中值，请核对后提交；提交后本机缓存即删除）"
+              : "（服务端从不保存命中原文，本机缓存中也没有该值，请凭记忆填入）"}
           </>
         )}
       </div>
