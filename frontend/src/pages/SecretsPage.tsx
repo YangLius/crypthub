@@ -405,7 +405,7 @@ function SecretList(props: {
         </div>
       )}
 
-      {creating !== undefined && (
+      {creating !== null && (
         <CreateModal
           myUserId={me.user_id}
           pendingRow={creating}

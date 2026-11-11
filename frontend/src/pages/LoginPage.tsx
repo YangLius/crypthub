@@ -68,10 +68,13 @@ export default function LoginPage() {
     }
     setBootBusy(true);
     try {
-      const r = await api.post<{ setup_token: string }>("/auth/bootstrap-init", {
-        username: adminName,
-        display_name: adminDisplayName || adminName,
-      });
+      const r = await api.post<{ setup_token: string }>(
+        "/auth/bootstrap-init",
+        {
+          username: adminName,
+          display_name: adminDisplayName || adminName,
+        },
+      );
       nav(`/setup?token=${encodeURIComponent(r.setup_token)}`);
     } catch (e) {
       setBootErr(e instanceof Error ? e.message : "初始化失败");
@@ -114,7 +117,11 @@ export default function LoginPage() {
             />
           </Field>
           {bootErr && <SecretHint>{bootErr}</SecretHint>}
-          <Button kind="primary" disabled={bootBusy} onClick={() => void bootstrap()}>
+          <Button
+            kind="primary"
+            disabled={bootBusy}
+            onClick={() => void bootstrap()}
+          >
             {bootBusy ? "创建中…" : "初始化系统（进入主密码设置）"}
           </Button>
           <p className="auth-sub" style={{ marginTop: 8 }}>
