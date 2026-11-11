@@ -97,8 +97,8 @@ async def upload(
     rel = storage.doc_file_rel_path(filename)
     row = await db.execute_returning(
         "INSERT INTO documents (title, filename, mime, size_bytes, sha256, file_path,"
-        " project, tags, status, uploaded_by, folder_id)"
-        " VALUES (:t, :f, :m, :sz, :sha, :fp, :pj, CAST(:tags AS jsonb), 'processing', :uid, :fid)"
+        " project, tags, status, uploaded_by, folder_id, client_redacted)"
+        " VALUES (:t, :f, :m, :sz, :sha, :fp, :pj, CAST(:tags AS jsonb), 'processing', :uid, :fid, :cr)"
         " RETURNING id, title, status",
         {
             "t": title,
@@ -111,6 +111,7 @@ async def upload(
             "tags": db.j(_parse_tags(tags)),
             "uid": ctx.user["id"],
             "fid": up_folder,
+            "cr": client_redacted == "true",
         },
     )
     if row is None:
@@ -163,7 +164,7 @@ async def list_documents(
 async def list_pending(request: Request):
     ctx: Ctx = await current_user(request)
     rows = await db.fetch_all(
-        "SELECT p.id, p.slug, p.kind, p.source_hint, p.status, p.created_at, d.title AS doc_title"
+        "SELECT p.id, p.slug, p.kind, p.source_doc_id, p.source_hint, p.status, p.created_at, d.title AS doc_title"
         " FROM pending_secrets p LEFT JOIN documents d ON d.id = p.source_doc_id"
         " WHERE p.created_by = :uid AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 200",
         {"uid": ctx.user["id"]},
@@ -176,12 +177,44 @@ async def get_document(doc_id: str, request: Request):
     await current_user(request)
     d = await db.fetch_one(
         "SELECT id, title, filename, mime, size_bytes, project, tags, status, error,"
-        " chunk_count, secret_ref, folder_id, created_at, updated_at FROM documents WHERE id = :id",
+        " chunk_count, secret_ref, folder_id, client_redacted, created_at, updated_at FROM documents WHERE id = :id",
         {"id": doc_id},
     )
     if not d:
         raise HTTPException(404, "文档不存在")
     return d
+
+
+@router.get("/{doc_id}/redacted")
+async def get_redacted_text(doc_id: str, request: Request):
+    """返回客户端预扫替换后的脱敏文本（仅占位符、无凭据原文）。
+
+    供密钥区"从本机原文回填"把占位符与本机原始文件重新扫描出的命中做上下文配对。
+    仅 client_redacted=true 的文档提供（服务端存的文件本身就是脱敏文本）；
+    非脱敏文档一律 404，避免变相提供原始文件下载。
+    """
+    await current_user(request)
+    d = await db.fetch_one(
+        "SELECT id, title, project, client_redacted, file_path"
+        " FROM documents WHERE id = :id",
+        {"id": doc_id},
+    )
+    if not d or not d["client_redacted"]:
+        raise HTTPException(404, "该文档没有可用的脱敏文本")
+    full = storage.abs_path(d["file_path"], settings.data_dir)
+    try:
+        if os.path.getsize(full) > 2 * 1024 * 1024:
+            raise HTTPException(400, "脱敏文本过大，请手工认领")
+        with open(full, "rb") as fo:
+            raw = fo.read()
+    except OSError:
+        raise HTTPException(404, "脱敏文本文件缺失") from None
+    return {
+        "id": d["id"],
+        "title": d["title"],
+        "project": d["project"],
+        "text": raw.decode("utf-8", errors="replace"),
+    }
 
 
 @router.patch("/{doc_id}")

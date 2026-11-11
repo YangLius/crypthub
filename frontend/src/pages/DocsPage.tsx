@@ -144,7 +144,11 @@ export default function DocsPage() {
     }
     const rd = redactAll(scanning.text);
     // 命中原文只存本机 sessionStorage，供密钥区“新建并认领”时回填；绝不发给服务端
-    savePrescanHits(rd.resolved, meta.title || scanning.file.name, meta.project);
+    savePrescanHits(
+      rd.resolved,
+      meta.title || scanning.file.name,
+      meta.project,
+    );
     const redactedFile = new File([rd.text], scanning.file.name, {
       type: "text/plain",
       lastModified: scanning.file.lastModified,

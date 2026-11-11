@@ -191,3 +191,9 @@ CREATE INDEX IF NOT EXISTS idx_folders_kind_owner ON folders(kind, owner_id);
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES folders(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
 ALTER TABLE secret_grants ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES folders(id) ON DELETE SET NULL;
+
+-- 前向迁移（2026-11-12）：记录客户端预扫替换标记；旧数据按"上传预扫"提示回填
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS client_redacted BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE documents d SET client_redacted = TRUE
+ WHERE EXISTS (SELECT 1 FROM pending_secrets p
+               WHERE p.source_doc_id = d.id AND p.source_hint LIKE '%上传预扫%');

@@ -26,9 +26,12 @@ import {
   aeadOpen,
 } from "../crypto/core";
 import { toast, toastErr, useApp } from "../store";
+import { scan } from "../gates/redact";
 import {
+  matchPendingsToLocal,
   peekPrescanHit,
   removePrescanHit,
+  savePrescanHits,
   suggestFields,
   type CachedHit,
 } from "../secrets/prescanCache";
@@ -91,6 +94,7 @@ interface PendingRow {
   id: string;
   slug: string;
   kind: string;
+  source_doc_id: string | null;
   source_hint: string;
   doc_title: string | null;
 }
@@ -288,6 +292,19 @@ function SecretList(props: {
     activeFolder,
   } = props;
   const [creating, setCreating] = useState<PendingRow | null>(null);
+  const [recovering, setRecovering] = useState<{
+    docId: string;
+    title: string;
+  } | null>(null);
+  const docGroups = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of pending) {
+      if (p.source_doc_id && !m.has(p.source_doc_id)) {
+        m.set(p.source_doc_id, p.doc_title ?? p.source_hint);
+      }
+    }
+    return [...m.entries()];
+  }, [pending]);
   const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState<SecretFull | null>(null);
   const [moving, setMoving] = useState<SecretRow | null>(null);
@@ -436,8 +453,31 @@ function SecretList(props: {
           }}
         >
           <h4 style={{ margin: "0 0 8px" }}>
-            待认领占位符（上传预扫产生；真实值只在当时的浏览器里）
+            待认领占位符（预扫产生；认领时自动回填本机记录的命中值）
           </h4>
+          {docGroups.length > 0 && (
+            <div
+              style={{
+                marginBottom: 8,
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 12, opacity: 0.7 }}>
+                旧上传（无本机缓存）可从原文回填：
+              </span>
+              {docGroups.map(([id, gTitle]) => (
+                <Button
+                  key={id}
+                  kind="ghost"
+                  onClick={() => setRecovering({ docId: id, title: gTitle })}
+                >
+                  从本机原文回填《{gTitle}》
+                </Button>
+              ))}
+            </div>
+          )}
           <table className="grid">
             <thead>
               <tr>
@@ -503,6 +543,14 @@ function SecretList(props: {
               onPendingChange(pending.filter((x) => x.id !== creating.id));
             }
           }}
+        />
+      )}
+      {recovering && (
+        <RecoverModal
+          docId={recovering.docId}
+          title={recovering.title}
+          pendings={pending.filter((p) => p.source_doc_id === recovering.docId)}
+          onClose={() => setRecovering(null)}
         />
       )}
       {viewing && (
@@ -993,6 +1041,79 @@ function CreateModal({
       <Button kind="primary" disabled={busy} onClick={() => void create()}>
         {busy ? "加密上传中…" : "加密并创建"}
       </Button>
+    </Modal>
+  );
+}
+
+function RecoverModal({
+  docId,
+  title,
+  pendings,
+  onClose,
+}: {
+  docId: string;
+  title: string;
+  pendings: PendingRow[];
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const onFile = async (f: File | null) => {
+    if (!f || busy) return;
+    setBusy(true);
+    try {
+      const text = await f.text();
+      const hits = scan(text);
+      const rd = await api.get<{ text: string; project: string }>(
+        `/documents/${docId}/redacted`,
+      );
+      const { pairs, total } = matchPendingsToLocal(rd.text, text, hits);
+      const rows: CachedHit[] = [];
+      for (const p of pendings) {
+        const value = pairs.get(p.slug);
+        if (value) {
+          rows.push({
+            slug: p.slug,
+            kind: p.kind,
+            value,
+            title,
+            project: rd.project ?? "",
+          });
+        }
+      }
+      if (rows.length) {
+        savePrescanHits(rows, title, rd.project ?? "");
+        const miss = total - rows.length;
+        toast(
+          `已回填 ${rows.length}/${total} 处${miss > 0 ? `（${miss} 处未配对）` : ""}，点"新建并认领"即可自动带入`,
+        );
+        onClose();
+      } else {
+        toastErr("未能配对：本机文件与上传时差异过大，请手工填写");
+      }
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "回填失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`从本机原文回填《${title}》`} onClose={onClose}>
+      <div className="secret-hint">
+        选择上传时使用的<b>本机原始文件</b>：本页重新扫描并把命中的真实值与文档里的
+        占位符按上下文配对，回填到"新建并认领"表单。文件只在本机解析、不会上传；
+        回填的值在提交前始终可见可改。
+      </div>
+      <input
+        type="file"
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          e.target.value = "";
+          void onFile(f);
+        }}
+      />
+      {busy && <Spinner />}
     </Modal>
   );
 }
