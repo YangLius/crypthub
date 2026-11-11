@@ -30,6 +30,7 @@ class DocUpdateBody(BaseModel):
     project: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=20)
     secret_ref: str | None = Field(default=None, max_length=64)
+    folder_id: str | None = Field(default=None, max_length=64)  # None=不改动；"root"=移回根
 
 
 def _parse_tags(raw: str | None) -> list[str]:
@@ -52,6 +53,7 @@ async def upload(
     project: str = Form(""),
     tags: str = Form(""),
     client_redacted: str = Form("false"),
+    folder_id: str = Form(""),
 ):
     ctx: Ctx = await current_user(request)
     data = bytearray()
@@ -69,6 +71,16 @@ async def upload(
     mime = file.content_type or ""
     title = (title or os.path.splitext(filename)[0])[:200]
 
+    up_folder: str | None = None
+    if folder_id:
+        f = await db.fetch_one(
+            "SELECT id FROM folders WHERE id = :fid AND kind = 'doc' AND owner_id IS NULL",
+            {"fid": folder_id},
+        )
+        if not f:
+            raise HTTPException(404, "目标目录不存在")
+        up_folder = folder_id
+
     sha = hashlib.sha256(raw).hexdigest()
     dup = await db.fetch_one(
         "SELECT id, title FROM documents WHERE sha256 = :sha", {"sha": sha}
@@ -83,8 +95,8 @@ async def upload(
     rel = storage.doc_file_rel_path(filename)
     row = await db.execute_returning(
         "INSERT INTO documents (title, filename, mime, size_bytes, sha256, file_path,"
-        " project, tags, status, uploaded_by)"
-        " VALUES (:t, :f, :m, :sz, :sha, :fp, :pj, CAST(:tags AS jsonb), 'processing', :uid)"
+        " project, tags, status, uploaded_by, folder_id)"
+        " VALUES (:t, :f, :m, :sz, :sha, :fp, :pj, CAST(:tags AS jsonb), 'processing', :uid, :fid)"
         " RETURNING id, title, status",
         {
             "t": title,
@@ -96,6 +108,7 @@ async def upload(
             "pj": (project or "")[:64],
             "tags": db.j(_parse_tags(tags)),
             "uid": ctx.user["id"],
+            "fid": up_folder,
         },
     )
     if row is None:
@@ -128,7 +141,7 @@ async def list_documents(
     await current_user(request)
     sql = (
         "SELECT d.id, d.title, d.filename, d.mime, d.size_bytes, d.project, d.tags,"
-        " d.status, d.error, d.chunk_count, d.secret_ref, d.created_at, d.updated_at,"
+        " d.status, d.error, d.chunk_count, d.secret_ref, d.folder_id, d.created_at, d.updated_at,"
         " u.username AS uploader"
         " FROM documents d LEFT JOIN users u ON u.id = d.uploaded_by WHERE 1=1"
     )
@@ -161,7 +174,7 @@ async def get_document(doc_id: str, request: Request):
     await current_user(request)
     d = await db.fetch_one(
         "SELECT id, title, filename, mime, size_bytes, project, tags, status, error,"
-        " chunk_count, secret_ref, created_at, updated_at FROM documents WHERE id = :id",
+        " chunk_count, secret_ref, folder_id, created_at, updated_at FROM documents WHERE id = :id",
         {"id": doc_id},
     )
     if not d:
@@ -181,11 +194,22 @@ async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
         )
         if not s:
             raise HTTPException(404, "关联的密钥条目不存在")
+    has_folder = body.folder_id is not None
+    new_folder: str | None = None
+    if has_folder and body.folder_id != "root":
+        f = await db.fetch_one(
+            "SELECT id FROM folders WHERE id = :fid AND kind = 'doc' AND owner_id IS NULL",
+            {"fid": body.folder_id},
+        )
+        if not f:
+            raise HTTPException(404, "目标目录不存在")
+        new_folder = body.folder_id
     await db.execute(
         "UPDATE documents SET"
         " title = COALESCE(:t, title), project = COALESCE(:pj, project),"
         " tags = COALESCE(CAST(:tags AS jsonb), tags),"
         " secret_ref = CASE WHEN :has_ref THEN :ref ELSE secret_ref END,"
+        " folder_id = CASE WHEN :has_folder THEN :fid ELSE folder_id END,"
         " updated_at = now() WHERE id = :id",
         {
             "t": body.title,
@@ -193,6 +217,8 @@ async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
             "tags": db.j(body.tags) if body.tags is not None else None,
             "has_ref": body.secret_ref is not None,
             "ref": body.secret_ref,
+            "has_folder": has_folder,
+            "fid": new_folder,
             "id": doc_id,
         },
     )

@@ -321,6 +321,82 @@ def main() -> int:
         r.status_code == 200 and len(r.json().get("results", [])) >= 1,
     )
 
+    # ---------- 7.5 多级目录（切回 admin 会话：建号/归档都是 admin 视角） ----------
+    cha0 = c.post("/auth/challenge", json={"username": "admin"}).json()
+    proofa0 = mc.hmac_hex(bytes.fromhex(m["auth_verifier"]), cha0["challenge"])
+    c.post("/auth/login", json={"challenge_id": cha0["challenge_id"], "proof": proofa0})
+
+    r = c.post("/folders", json={"kind": "doc", "name": "运维手册"})
+    doc_folder = (r.json().get("folder") or {}).get("id", "")
+    step("folders: 建根目录", r.status_code == 200 and bool(doc_folder))
+
+    r = c.post(
+        "/folders", json={"kind": "doc", "name": "网络", "parent_id": doc_folder}
+    )
+    sub_folder = (r.json().get("folder") or {}).get("id", "")
+    step("folders: 建子目录", r.status_code == 200 and bool(sub_folder))
+
+    r = c.patch(
+        f"/folders/{doc_folder}", json={"name": "运维文档", "parent_id": None}
+    )
+    step("folders: 重命名", r.status_code == 200)
+
+    r = c.post(
+        "/folders", json={"kind": "doc", "name": "网络", "parent_id": doc_folder}
+    )
+    step("folders: 同级同名拒绝 400", r.status_code == 400)
+
+    # 环拒绝：把父目录移到自己子目录下
+    r = c.patch(
+        f"/folders/{doc_folder}",
+        json={"name": "运维文档", "parent_id": sub_folder},
+    )
+    step("folders: 移入自己子树拒绝 400", r.status_code == 400)
+
+    # 文档归档到子目录并回读
+    r = c.patch(f"/documents/{doc_id}", json={"folder_id": sub_folder})
+    step("folders: 文档归档", r.status_code == 200)
+    r = c.get(f"/documents/{doc_id}")
+    step(
+        "folders: 文档目录回读一致",
+        r.status_code == 200 and r.json().get("folder_id") == sub_folder,
+        f"folder_id={r.json().get('folder_id')}",
+    )
+
+    # 密钥目录（admin 私有树）+ 归档回读
+    r = c.post("/folders", json={"kind": "secret", "name": "生产凭据"})
+    sec_folder = (r.json().get("folder") or {}).get("id", "")
+    step("folders: 建密钥目录", r.status_code == 200 and bool(sec_folder))
+    r = c.patch(f"/secrets/{sid}/folder", json={"folder_id": sec_folder})
+    step("folders: 密钥归档", r.status_code == 200)
+    mine = c.get("/secrets").json().get("secrets", [])
+    filed = [s for s in mine if s["id"] == sid]
+    step(
+        "folders: 密钥目录回读一致",
+        bool(filed) and filed[0].get("folder_id") == sec_folder,
+    )
+
+    # bob 不能在 admin 的私有目录树下操作（父目录不可见 → 404）
+    chb0 = c.post("/auth/challenge", json={"username": "bob"}).json()
+    proofb0 = mc.hmac_hex(bytes.fromhex(mb["auth_verifier"]), chb0["challenge"])
+    c.post("/auth/login", json={"challenge_id": chb0["challenge_id"], "proof": proofb0})
+    r = c.post(
+        "/folders",
+        json={"kind": "secret", "name": "越权", "parent_id": sec_folder},
+    )
+    step("folders: 他人私有目录 404", r.status_code == 404)
+
+    # 切回 admin（后续删除/审计都以 admin 身份）
+    cha1 = c.post("/auth/challenge", json={"username": "admin"}).json()
+    proofa1 = mc.hmac_hex(bytes.fromhex(m["auth_verifier"]), cha1["challenge"])
+    c.post("/auth/login", json={"challenge_id": cha1["challenge_id"], "proof": proofa1})
+
+    # 删除子目录 → 文档回到未归档
+    r = c.delete(f"/folders/{sub_folder}")
+    step("folders: 删除目录", r.status_code == 200)
+    r = c.get(f"/documents/{doc_id}")
+    step("folders: 删除后文档回根", r.json().get("folder_id") is None)
+
     # ---------- 8. 审计（切回 admin 会话，避免被 bob 的 cookie 覆盖） ----------
     cha = c.post("/auth/challenge", json={"username": "admin"}).json()
     proofa = mc.hmac_hex(bytes.fromhex(m["auth_verifier"]), cha["challenge"])

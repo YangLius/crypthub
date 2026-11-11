@@ -166,3 +166,28 @@ CREATE TABLE IF NOT EXISTS group_members (
     user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (group_id, user_id)
 );
+
+-- ---------- 多级目录（文档区=全局共享树；密钥区=每人私有树） ----------
+-- owner_id：doc 树为 NULL（全员共享）；secret 树=用户 id（每人独立组织自己的视图）。
+-- 删除目录：子目录级联删除；文档/密钥授权行的 folder_id 由外键 SET NULL 自动回到根。
+CREATE TABLE IF NOT EXISTS folders (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind        text NOT NULL CHECK (kind IN ('doc','secret')),
+    parent_id   uuid REFERENCES folders(id) ON DELETE CASCADE,
+    name        text NOT NULL,
+    owner_id    uuid REFERENCES users(id) ON DELETE CASCADE,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+-- 同目录下同名唯一（parent/owner 为 NULL 时用零 uuid 参与唯一约束）
+CREATE UNIQUE INDEX IF NOT EXISTS uq_folder_name ON folders(
+    kind,
+    COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    name,
+    COALESCE(owner_id, '00000000-0000-0000-0000-000000000000'::uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_folders_kind_owner ON folders(kind, owner_id);
+
+-- 归档列（ADD COLUMN IF NOT EXISTS：对已初始化的库做前向迁移）
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES folders(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
+ALTER TABLE secret_grants ADD COLUMN IF NOT EXISTS folder_id uuid REFERENCES folders(id) ON DELETE SET NULL;

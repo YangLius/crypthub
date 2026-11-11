@@ -27,6 +27,11 @@ import {
 } from "../crypto/core";
 import { toast, toastErr, useApp } from "../store";
 import { Badge, Button, Empty, Field, Modal, Spinner } from "../components/ui";
+import {
+  FolderPickerModal,
+  FolderTree,
+  type FolderSel,
+} from "../components/FolderTree";
 
 interface SecretRow {
   id: string;
@@ -38,6 +43,7 @@ interface SecretRow {
   owner_id: string;
   updated_at: string;
   is_owner: boolean;
+  folder_id: string | null;
 }
 interface ShareTarget {
   id: string;
@@ -87,6 +93,10 @@ export default function SecretsPage() {
   const [group, setGroup] = useState("");
   const [q, setQ] = useState("");
 
+  // 多级目录（每人自己的私有树）
+  const [folder, setFolder] = useState<FolderSel>(null);
+  const [folderKey, setFolderKey] = useState(0);
+
   useEffect(() => {
     if (!vault) return;
     api
@@ -101,7 +111,9 @@ export default function SecretsPage() {
   const filtered = (rows ?? []).filter(
     (r) =>
       (!group || r.project === group) &&
-      (!q || r.name.toLowerCase().includes(q.toLowerCase())),
+      (!q || r.name.toLowerCase().includes(q.toLowerCase())) &&
+      (folder === null ||
+        (folder === "root" ? !r.folder_id : r.folder_id === folder)),
   );
 
   return (
@@ -123,19 +135,32 @@ export default function SecretsPage() {
         服务端可见名称/项目/标签，看不到任何内容（零知识）。
       </div>
 
-      <SecretList
-        vault={vault}
-        rows={rows}
-        setRows={setRows}
-        filtered={filtered}
-        group={group}
-        setGroup={setGroup}
-        q={q}
-        setQ={setQ}
-        me={me}
-        pending={pending}
-        onPendingChange={setPending}
-      />
+      <div className="with-folder-panel">
+        <FolderTree
+          kind="secret"
+          selected={folder}
+          onSelect={setFolder}
+          reloadKey={folderKey}
+          onMutate={() => setFolderKey((k) => k + 1)}
+          rootLabel="未归档"
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SecretList
+            vault={vault}
+            rows={rows}
+            setRows={setRows}
+            filtered={filtered}
+            group={group}
+            setGroup={setGroup}
+            q={q}
+            setQ={setQ}
+            me={me}
+            pending={pending}
+            onPendingChange={setPending}
+            activeFolder={folder}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -225,6 +250,7 @@ function SecretList(props: {
   me: { user_id: string; role: string };
   pending: PendingRow[];
   onPendingChange: (p: PendingRow[]) => void;
+  activeFolder: FolderSel;
 }) {
   const {
     vault,
@@ -238,9 +264,24 @@ function SecretList(props: {
     me,
     pending,
     onPendingChange,
+    activeFolder,
   } = props;
   const [creating, setCreating] = useState<PendingRow | null>(null);
   const [viewing, setViewing] = useState<SecretFull | null>(null);
+  const [moving, setMoving] = useState<SecretRow | null>(null);
+
+  const moveRow = async (r: SecretRow, target: string | null) => {
+    try {
+      await api.patch(`/secrets/${r.id}/folder`, {
+        folder_id: target ?? "root", // null=移回未归档；发 "root" 哨兵
+      });
+      toast(target ? "已归档" : "已移回未归档");
+      setMoving(null);
+      await refresh();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "移动失败");
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -310,6 +351,9 @@ function SecretList(props: {
                     }}
                   >
                     查看
+                  </Button>
+                  <Button kind="ghost" title="归档到我的目录" onClick={() => setMoving(r)}>
+                    移动
                   </Button>
                 </td>
               </tr>
@@ -412,6 +456,12 @@ function SecretList(props: {
           onClose={() => setCreating(null)}
           onDone={(sid) => {
             setCreating(null);
+            // 在目录视图里新建时，自动归档到当前目录（"root"=未归档不发请求）
+            if (sid && activeFolder && activeFolder !== "root") {
+              void api
+                .patch(`/secrets/${sid}/folder`, { folder_id: activeFolder })
+                .catch(() => {});
+            }
             void refresh();
             const target = pending[0];
             if (target && sid) {
@@ -433,6 +483,14 @@ function SecretList(props: {
             setViewing(null);
             void refresh();
           }}
+        />
+      )}
+
+      {moving && (
+        <FolderPickerModal
+          kind="secret"
+          onClose={() => setMoving(null)}
+          onPick={(target) => void moveRow(moving, target)}
         />
       )}
     </div>

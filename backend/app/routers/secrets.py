@@ -149,7 +149,7 @@ async def list_secrets(request: Request, project: str = "", env: str = "", q: st
     ctx: Ctx = await current_user(request)
     sql = (
         "SELECT s.id, s.name, s.project, s.env, s.tags, s.version, s.owner_id,"
-        " s.updated_at, (s.owner_id = :me) AS is_owner"
+        " s.updated_at, g.folder_id, (s.owner_id = :me) AS is_owner"
         " FROM secrets s JOIN secret_grants g ON g.secret_id = s.id AND g.user_id = :me"
         " WHERE 1=1"
     )
@@ -166,6 +166,36 @@ async def list_secrets(request: Request, project: str = "", env: str = "", q: st
     sql += " ORDER BY s.updated_at DESC LIMIT 500"
     rows = await db.fetch_all(sql, params)
     return {"secrets": rows}
+
+
+class FolderMoveBody(BaseModel):
+    folder_id: str = Field(max_length=64)  # "root"=移回根目录
+
+
+@router.patch("/{sid}/folder")
+async def set_secret_folder(sid: str, body: FolderMoveBody, request: Request):
+    """归档到「我自己」的目录树（每人独立视图，互不影响）。"""
+    ctx: Ctx = await current_user(request)
+    g = await db.fetch_one(
+        "SELECT id FROM secret_grants WHERE secret_id = :sid AND user_id = :uid",
+        {"sid": sid, "uid": ctx.user["id"]},
+    )
+    if not g:
+        raise HTTPException(403, "你没有这条密钥的授权")
+    target: str | None = None
+    if body.folder_id != "root":
+        f = await db.fetch_one(
+            "SELECT id FROM folders WHERE id = :fid AND kind = 'secret' AND owner_id = :uid",
+            {"fid": body.folder_id, "uid": ctx.user["id"]},
+        )
+        if not f:
+            raise HTTPException(404, "目标目录不存在")
+        target = body.folder_id
+    await db.execute(
+        "UPDATE secret_grants SET folder_id = :fid WHERE id = :gid",
+        {"fid": target, "gid": g["id"]},
+    )
+    return {"ok": True}
 
 
 @router.get("/share-targets")

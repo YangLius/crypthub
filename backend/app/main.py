@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db, security
 from .config import settings
-from .routers import admin, auth, chat, dify, documents, search, secrets
+from .routers import admin, auth, chat, dify, documents, folders, search, secrets
 from .routers import audit as audit_router
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(documents.router)
+app.include_router(folders.router)
 app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(secrets.router)

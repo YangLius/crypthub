@@ -447,3 +447,122 @@ textarea {
     width: 100%;
   }
 }
+
+/* ---------- 多级目录面板（文档区/密钥区共用） ---------- */
+.with-folder-panel {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.folder-panel {
+  width: 232px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.folder-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 3px 6px;
+  gap: 2px;
+  min-height: 28px;
+}
+.folder-row:hover {
+  background: color-mix(in srgb, var(--line) 40%, transparent);
+}
+.folder-row.active {
+  background: color-mix(in srgb, var(--accent, #4a6cf7) 14%, transparent);
+}
+.folder-caret {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  width: 16px;
+}
+.folder-name {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+.folder-row.active .folder-name {
+  font-weight: 600;
+}
+.folder-actions {
+  display: none;
+  gap: 0;
+  flex-shrink: 0;
+}
+.folder-row:hover .folder-actions {
+  display: inline-flex;
+}
+.folder-act {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.folder-act:hover {
+  background: var(--line);
+  color: var(--text);
+}
+.folder-new-input {
+  width: 100%;
+  font-size: 13px;
+  padding: 3px 6px;
+}
+.folder-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 45vh;
+  overflow: auto;
+}
+.folder-item {
+  border: 1px solid var(--line);
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  white-space: pre;
+  color: var(--text);
+}
+.folder-item:hover {
+  background: color-mix(in srgb, var(--line) 40%, transparent);
+}
+@media (max-width: 900px) {
+  .with-folder-panel {
+    flex-direction: column-reverse;
+  }
+  .folder-panel {
+    width: 100%;
+    max-height: 240px;
+  }
+}

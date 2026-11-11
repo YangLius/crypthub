@@ -1,4 +1,4 @@
-/** 文档区：上传（客户端预扫 + 确认替换）、列表、元数据、待认领队列。 */
+/** 文档区：上传（客户端预扫 + 确认替换）、列表、元数据、待认领队列、多级目录归档。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -13,6 +13,11 @@ import {
   Spinner,
   StatusBadge,
 } from "../components/ui";
+import {
+  FolderPickerModal,
+  FolderTree,
+  type FolderSel,
+} from "../components/FolderTree";
 
 interface Doc {
   id: string;
@@ -24,6 +29,7 @@ interface Doc {
   error: string | null;
   chunk_count: number;
   secret_ref: string | null;
+  folder_id: string | null;
   uploader: string;
   created_at: string;
 }
@@ -42,6 +48,11 @@ export default function DocsPage() {
   const [q, setQ] = useState("");
   const [project, setProject] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // 多级目录
+  const [folder, setFolder] = useState<FolderSel>(null);
+  const [folderKey, setFolderKey] = useState(0);
+  const [moving, setMoving] = useState<Doc | null>(null);
 
   // 上传向导状态
   const [scanning, setScanning] = useState<{
@@ -104,6 +115,7 @@ export default function DocsPage() {
       form.append("project", meta.project);
       form.append("tags", meta.tags);
       form.append("client_redacted", String(clientRedacted));
+      form.append("folder_id", folder && folder !== "root" ? folder : "");
       const r = await api.form<{ id: string }>("/documents", form);
       if (pendingItems.length) {
         await api.post(`/documents/${r.id}/pending`, { items: pendingItems });
@@ -139,10 +151,25 @@ export default function DocsPage() {
 
   const filtered = (docs ?? []).filter(
     (d) =>
-      !q ||
-      d.title.toLowerCase().includes(q.toLowerCase()) ||
-      d.project.includes(q),
+      (!q ||
+        d.title.toLowerCase().includes(q.toLowerCase()) ||
+        d.project.includes(q)) &&
+      (folder === null ||
+        (folder === "root" ? !d.folder_id : d.folder_id === folder)),
   );
+
+  const moveDoc = async (d: Doc, target: string | null) => {
+    try {
+      await api.patch(`/documents/${d.id}`, {
+        folder_id: target ?? "root", // null=移回根；发 "root" 哨兵
+      });
+      toast(target ? "已移动" : "已移回未归档");
+      setMoving(null);
+      await refresh();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "移动失败");
+    }
+  };
 
   return (
     <div>
@@ -164,6 +191,16 @@ export default function DocsPage() {
         />
       </div>
 
+      <div className="with-folder-panel">
+        <FolderTree
+          kind="doc"
+          selected={folder}
+          onSelect={setFolder}
+          reloadKey={folderKey}
+          onMutate={() => setFolderKey((k) => k + 1)}
+          rootLabel="未归档"
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="toolbar">
           <input
@@ -237,6 +274,9 @@ export default function DocsPage() {
                       }}
                     >
                       重建索引
+                    </Button>
+                    <Button kind="ghost" title="移动到目录" onClick={() => setMoving(d)}>
+                      移动
                     </Button>
                     <Button
                       kind="ghost"
@@ -381,6 +421,16 @@ export default function DocsPage() {
           </div>
         </Modal>
       )}
+
+      {moving && (
+        <FolderPickerModal
+          kind="doc"
+          onClose={() => setMoving(null)}
+          onPick={(target) => void moveDoc(moving, target)}
+        />
+      )}
+        </div>
+      </div>
     </div>
   );
 }
