@@ -143,7 +143,8 @@ import { scan } from "../src/gates/redact";
 
 describe("matchPendingsToLocal 上下文配对", () => {
   it("占位符与本机命中按上下文正确配对（模拟旧上传恢复）", () => {
-    const local = "前情提要 数据库密码 password=Real#1x 后续文字。api_key=sk-ABCDEF123456 结尾";
+    const local =
+      "前情提要 数据库密码 password=Real#1x 后续文字。api_key=sk-ABCDEF123456 结尾";
     const hits = scan(local);
     expect(hits.length).toBeGreaterThan(0);
     const rd = redactAll(local);
@@ -166,7 +167,8 @@ describe("matchPendingsToLocal 上下文配对", () => {
   });
 
   it("本机文件头部有改动（命中位置平移）仍按上下文正确配对", () => {
-    const original = "标题行\n账号 admin_user_1\n密码: Str0ngPass!9\n尾部说明文字";
+    const original =
+      "标题行\n账号 admin_user_1\n密码: Str0ngPass!9\n尾部说明文字";
     const rd = redactAll(original);
     const hits = scan(original);
     let redacted = original;
@@ -186,7 +188,11 @@ describe("matchPendingsToLocal 上下文配对", () => {
   it("占位符多于本机命中时只回填补上的部分且不崩溃", () => {
     const redacted = "x {{secret:aaaaaa1}} y {{secret:bbbbbb2}} z";
     const localText = "只有一处 password=OnlyOne99x";
-    const { pairs, total } = matchPendingsToLocal(redacted, localText, scan(localText));
+    const { pairs, total } = matchPendingsToLocal(
+      redacted,
+      localText,
+      scan(localText),
+    );
     expect(total).toBe(2);
     expect(pairs.size).toBeLessThanOrEqual(2);
   });

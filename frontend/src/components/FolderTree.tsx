@@ -59,6 +59,25 @@ export function flattenFolders(folders: Folder[]): FlatItem[] {
   return out;
 }
 
+/** id → 完整路径（"父/子"），供列表行显示所在目录；防环。 */
+export function folderPaths(folders: Folder[]): Map<string, string> {
+  const byId = new Map<string, Folder>();
+  for (const f of folders) byId.set(f.id, f);
+  const out = new Map<string, string>();
+  for (const f of folders) {
+    const parts: string[] = [f.name];
+    const seen = new Set<string>([f.id]);
+    let p = f.parent_id;
+    while (p && byId.has(p) && !seen.has(p)) {
+      seen.add(p);
+      parts.unshift(byId.get(p)!.name);
+      p = byId.get(p)!.parent_id;
+    }
+    out.set(f.id, parts.join("/"));
+  }
+  return out;
+}
+
 interface FolderTreeProps {
   kind: "doc" | "secret";
   selected: FolderSel;

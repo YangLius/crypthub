@@ -17,6 +17,8 @@ import {
 import {
   FolderPickerModal,
   FolderTree,
+  folderPaths,
+  useFolders,
   type FolderSel,
 } from "../components/FolderTree";
 
@@ -53,6 +55,8 @@ export default function DocsPage() {
   // 多级目录
   const [folder, setFolder] = useState<FolderSel>(null);
   const [folderKey, setFolderKey] = useState(0);
+  const folders = useFolders("doc", folderKey);
+  const folderPathMap = folderPaths(folders);
   const [moving, setMoving] = useState<Doc | null>(null);
 
   // 上传向导状态
@@ -240,6 +244,7 @@ export default function DocsPage() {
                 <thead>
                   <tr>
                     <th>标题</th>
+                    <th>目录</th>
                     <th>项目</th>
                     <th>标签</th>
                     <th>状态</th>
@@ -259,6 +264,20 @@ export default function DocsPage() {
                             {d.error}
                           </div>
                         )}
+                      </td>
+                      <td>
+                        <span
+                          style={{
+                            cursor: "pointer",
+                            textDecoration: "underline dotted",
+                          }}
+                          title="点击筛选该目录"
+                          onClick={() => setFolder(d.folder_id ?? "root")}
+                        >
+                          {d.folder_id
+                            ? (folderPathMap.get(d.folder_id) ?? "—")
+                            : "根目录"}
+                        </span>
                       </td>
                       <td>{d.project || "—"}</td>
                       <td>{(d.tags ?? []).join("、") || "—"}</td>

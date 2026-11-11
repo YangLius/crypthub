@@ -47,6 +47,8 @@ import {
 import {
   FolderPickerModal,
   FolderTree,
+  folderPaths,
+  useFolders,
   type FolderSel,
 } from "../components/FolderTree";
 import {
@@ -121,6 +123,7 @@ export default function SecretsPage() {
   // 多级目录（每人自己的私有树）
   const [folder, setFolder] = useState<FolderSel>(null);
   const [folderKey, setFolderKey] = useState(0);
+  const folderPathMap = folderPaths(useFolders("secret", folderKey));
 
   useEffect(() => {
     if (!vault) return;
@@ -183,6 +186,8 @@ export default function SecretsPage() {
             pending={pending}
             onPendingChange={setPending}
             activeFolder={folder}
+            paths={folderPathMap}
+            onPickFolder={setFolder}
           />
         </div>
       </div>
@@ -276,6 +281,8 @@ function SecretList(props: {
   pending: PendingRow[];
   onPendingChange: (p: PendingRow[]) => void;
   activeFolder: FolderSel;
+  paths: Map<string, string>;
+  onPickFolder: (f: FolderSel) => void;
 }) {
   const {
     vault,
@@ -290,6 +297,8 @@ function SecretList(props: {
     pending,
     onPendingChange,
     activeFolder,
+    paths,
+    onPickFolder,
   } = props;
   const [creating, setCreating] = useState<PendingRow | null>(null);
   const [recovering, setRecovering] = useState<{
@@ -350,6 +359,7 @@ function SecretList(props: {
           <thead>
             <tr>
               <th>名称</th>
+              <th>目录</th>
               <th>项目</th>
               <th>环境</th>
               <th>标签</th>
@@ -364,6 +374,18 @@ function SecretList(props: {
                 <td>
                   <b>{r.name}</b>{" "}
                   {r.is_owner && <Badge tone="info">拥有</Badge>}
+                </td>
+                <td>
+                  <span
+                    style={{
+                      cursor: "pointer",
+                      textDecoration: "underline dotted",
+                    }}
+                    title="点击筛选该目录"
+                    onClick={() => onPickFolder(r.folder_id ?? "root")}
+                  >
+                    {r.folder_id ? (paths.get(r.folder_id) ?? "—") : "根目录"}
+                  </span>
                 </td>
                 <td>{r.project || "—"}</td>
                 <td>
@@ -1101,7 +1123,8 @@ function RecoverModal({
   return (
     <Modal title={`从本机原文回填《${title}》`} onClose={onClose}>
       <div className="secret-hint">
-        选择上传时使用的<b>本机原始文件</b>：本页重新扫描并把命中的真实值与文档里的
+        选择上传时使用的<b>本机原始文件</b>
+        ：本页重新扫描并把命中的真实值与文档里的
         占位符按上下文配对，回填到"新建并认领"表单。文件只在本机解析、不会上传；
         回填的值在提交前始终可见可改。
       </div>

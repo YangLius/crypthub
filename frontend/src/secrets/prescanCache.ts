@@ -87,16 +87,16 @@ export function suggestFields(hit: {
  if (/user(name)?|账号|用户|login|email/i.test(key)) return { username: val };
  if (/token|令牌|api[\s_-]?key|secret|密钥|key/i.test(key))
   return { tokens: val };
-  return { notes: `${key}: ${val}` };
+ return { notes: `${key}: ${val}` };
 }
 
 const PH_RE = /\{\{secret:[a-f0-9]{6,64}\}\}/g;
 
 export interface MatchResult {
-  /** slug → 本机原文命中值 */
-  pairs: Map<string, string>;
-  /** 脱敏文本里占位符总数（便于提示未配对余量） */
-  total: number;
+ /** slug → 本机原文命中值 */
+ pairs: Map<string, string>;
+ /** 脱敏文本里占位符总数（便于提示未配对余量） */
+ total: number;
 }
 
 /**
@@ -105,31 +105,34 @@ export interface MatchResult {
  * 上下文对不上（文件被改动）时退化为按顺序兜底，回填后表单可见可改。
  */
 export function matchPendingsToLocal(
-  redacted: string,
-  localText: string,
-  hits: Hit[],
-  context = 50,
+ redacted: string,
+ localText: string,
+ hits: Hit[],
+ context = 50,
 ): MatchResult {
-  const pairs = new Map<string, string>();
-  const phs: { slug: string; start: number }[] = [];
-  for (const m of redacted.matchAll(PH_RE)) {
-    phs.push({ slug: m[0].slice(9, -2), start: m.index ?? 0 });
+ const pairs = new Map<string, string>();
+ const phs: { slug: string; start: number }[] = [];
+ for (const m of redacted.matchAll(PH_RE)) {
+  phs.push({ slug: m[0].slice(9, -2), start: m.index ?? 0 });
+ }
+ let cursor = 0;
+ for (const ph of phs) {
+  const left = redacted.slice(Math.max(0, ph.start - context), ph.start);
+  let idx = -1;
+  for (let i = cursor; i < hits.length; i++) {
+   if (
+    localText.slice(Math.max(0, hits[i].start - context), hits[i].start) ===
+    left
+   ) {
+    idx = i;
+    break;
+   }
   }
-  let cursor = 0;
-  for (const ph of phs) {
-    const left = redacted.slice(Math.max(0, ph.start - context), ph.start);
-    let idx = -1;
-    for (let i = cursor; i < hits.length; i++) {
-      if (localText.slice(Math.max(0, hits[i].start - context), hits[i].start) === left) {
-        idx = i;
-        break;
-      }
-    }
-    if (idx === -1 && cursor < hits.length) idx = cursor;
-    if (idx >= 0) {
-      pairs.set(ph.slug, hits[idx].value);
-      cursor = idx + 1;
-    }
+  if (idx === -1 && cursor < hits.length) idx = cursor;
+  if (idx >= 0) {
+   pairs.set(ph.slug, hits[idx].value);
+   cursor = idx + 1;
   }
-  return { pairs, total: phs.length };
+ }
+ return { pairs, total: phs.length };
 }
