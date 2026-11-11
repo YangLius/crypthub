@@ -99,6 +99,35 @@ def _read_file(path: str) -> bytes:
         raise RuntimeError(f"无法读取文件 {path}: {e}") from e
 
 
+_HEAL_INTERVAL_S = 60.0
+
+
+async def heal_stale_docs() -> None:
+    """自愈：卡在 processing 超过 10 分钟的文档重新入队。
+
+    任务在队列里丢失（内存型 Redis 重启、坏 JSON 被丢弃、进程中断）会让
+    文档永远停在 processing、搜索/问答永远查不到。把 updated_at 推进到
+    现在作为"已补发"标记：若任务再次丢失，10 分钟后会再补发。
+    """
+    try:
+        rows = await db.fetch_all(
+            "UPDATE documents SET updated_at = now()"
+            " WHERE status = 'processing'"
+            "   AND updated_at < now() - interval '10 minutes'"
+            " RETURNING id",
+        )
+    except Exception:
+        traceback.print_exc()
+        return
+    for row in rows:
+        doc_id = str(row["id"])
+        try:
+            await queue.enqueue_index(doc_id)
+            print(f"[worker] 自愈：补发丢失任务 {doc_id}", flush=True)
+        except redis.exceptions.ConnectionError as e:
+            print(f"[worker] 自愈入队失败（redis 异常，下轮重试）: {e}", flush=True)
+
+
 def _tokens(text: str) -> str:
     import jieba
 
@@ -162,6 +191,7 @@ async def main() -> None:
     _bg_tasks.add(embed_task)
     embed_task.add_done_callback(_bg_tasks.discard)
     r = security.redis_client()
+    last_heal = -_HEAL_INTERVAL_S  # 首个空闲心跳立即自愈一次
     while True:
         try:
             item = await r.blpop(queue.TASK_KEY, timeout=5)
@@ -172,6 +202,10 @@ async def main() -> None:
             await asyncio.sleep(1)
             continue
         if item is None:
+            now = asyncio.get_running_loop().time()
+            if now - last_heal >= _HEAL_INTERVAL_S:
+                last_heal = now
+                await heal_stale_docs()
             await asyncio.sleep(0.2)
             continue
         _, raw = item

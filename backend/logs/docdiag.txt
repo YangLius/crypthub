@@ -1,0 +1,14 @@
+DIAG_WRITTEN
+1 篇 ===
+status=processing mime=text/plain bytes=8071 chunk_count=0 title=01-报文与签名
+
+=== 目标文档 01-报文与签名 ===
+status=processing  chunks表中行数=0  dim=0  chunk文本最大长度=0
+
+=== 存储文件 files/771eaebe696647c7b6d5b01d57fc56ac.md ===
+读文件失败: [Errno 2] No such file or directory: 'files/771eaebe696647c7b6d5b01d57fc56ac.md'
+
+=== 各文档 chunks 数 ===
+chunks=0  status=processing  01-报文与签名
+
+redis LLEN kb:tasks = 0
