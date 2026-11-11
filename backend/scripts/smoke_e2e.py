@@ -45,7 +45,9 @@ def build_material(mp: str, uid: str, *, org: dict | None) -> dict:
         "salt_auth": mc.b64e(salt_auth),
         "salt_enc": mc.b64e(salt_enc),
         "auth_verifier": proof_hex,
-        "local_check_ct": mc.b64e(mc.aead_seal(enc, b"vault-check-v1", mc.AAD_LOCAL_CHECK)),
+        "local_check_ct": mc.b64e(
+            mc.aead_seal(enc, b"vault-check-v1", mc.AAD_LOCAL_CHECK)
+        ),
         "public_key": mc.b64e(pub),
         "priv_wrapped": mc.b64e(mc.aead_seal(enc, priv, mc.AAD_USER_PRIV + uid)),
         "rk_salt": mc.b64e(rk_salt),
@@ -55,16 +57,22 @@ def build_material(mp: str, uid: str, *, org: dict | None) -> dict:
         oc = org["code"]
         offline_salt = os.urandom(16)
         org_priv, org_pub = mc.x25519_keygen()
-        m.update({
-            "org_public_key": mc.b64e(org_pub),
-            "org_offline_salt": mc.b64e(offline_salt),
-            "org_priv_offline_wrapped": mc.b64e(
-                mc.aead_seal(mc.argon2id(oc.encode(), offline_salt), org_priv, mc.AAD_ORG_OFFLINE)
-            ),
-            "org_delegate_sealed": mc.b64e(
-                mc.ecies_seal(pub, org_priv, mc.AAD_ORG_DELEGATE + uid)
-            ),
-        })
+        m.update(
+            {
+                "org_public_key": mc.b64e(org_pub),
+                "org_offline_salt": mc.b64e(offline_salt),
+                "org_priv_offline_wrapped": mc.b64e(
+                    mc.aead_seal(
+                        mc.argon2id(oc.encode(), offline_salt),
+                        org_priv,
+                        mc.AAD_ORG_OFFLINE,
+                    )
+                ),
+                "org_delegate_sealed": mc.b64e(
+                    mc.ecies_seal(pub, org_priv, mc.AAD_ORG_DELEGATE + uid)
+                ),
+            }
+        )
         org["priv"], org["pub"] = org_priv, org_pub
     return m
 
@@ -76,7 +84,9 @@ def main() -> int:
     r = c.get("/auth/bootstrap-status").json()
     step("bootstrap-status", r.get("needs_bootstrap") is True, str(r))
 
-    r = c.post("/auth/bootstrap-init", json={"username": "admin", "display_name": "管理员"})
+    r = c.post(
+        "/auth/bootstrap-init", json={"username": "admin", "display_name": "管理员"}
+    )
     token = r.json().get("setup_token", "")
     step("bootstrap-init", bool(token))
 
@@ -88,7 +98,9 @@ def main() -> int:
     org: dict = {"code": base64.b32encode(os.urandom(20)).decode()}
     m = build_material(MP_ADMIN, uid_a, org=org)
     r = c.post("/auth/setup", json={"token": token, "display_name": "管理员", **m})
-    step("setup(admin+org)", r.status_code == 200, f"http={r.status_code} {r.text[:120]}")
+    step(
+        "setup(admin+org)", r.status_code == 200, f"http={r.status_code} {r.text[:120]}"
+    )
 
     # ---------- 1. 登录（挑战-应答） ----------
     ch = c.post("/auth/challenge", json={"username": "admin"}).json()
@@ -99,7 +111,14 @@ def main() -> int:
 
     me = c.get("/auth/me").json()
     ok = me.get("username") == "admin" and me.get("has_org") is True
-    step("auth/me", ok, json.dumps({k: me.get(k) for k in ("username", "role", "has_org", "unlocked")}, ensure_ascii=False))
+    step(
+        "auth/me",
+        ok,
+        json.dumps(
+            {k: me.get(k) for k in ("username", "role", "has_org", "unlocked")},
+            ensure_ascii=False,
+        ),
+    )
 
     # 错误密码应登录失败
     ch2 = c.post("/auth/challenge", json={"username": "admin"}).json()
@@ -129,7 +148,11 @@ def main() -> int:
     )
     doc = r.json()
     doc_id = doc.get("id", "")
-    step("documents/upload", r.status_code == 200 and bool(doc_id), f"http={r.status_code} {str(r.json())[:120]}")
+    step(
+        "documents/upload",
+        r.status_code == 200 and bool(doc_id),
+        f"http={r.status_code} {str(r.json())[:120]}",
+    )
 
     # 重复上传应 409
     r2 = c.post(
@@ -150,7 +173,11 @@ def main() -> int:
             break
         time.sleep(3)
     err = d.get("error") or ""
-    step("worker 索引完成", status == "ready", f"status={status} chunks={d.get('chunk_count')} err={err[:100]}")
+    step(
+        "worker 索引完成",
+        status == "ready",
+        f"status={status} chunks={d.get('chunk_count')} err={err[:100]}",
+    )
 
     pend = c.get("/documents/pending").json()
     n_pending = len(pend.get("pending", pend if isinstance(pend, list) else []))
@@ -160,7 +187,11 @@ def main() -> int:
     r = c.post("/search", json={"q": "数据库连接方式"})
     hits = r.json().get("results", [])
     ok = r.status_code == 200 and len(hits) >= 1 and hits[0]["document_id"] == doc_id
-    step("search(向量+关键词RRF)", ok, f"hits={len(hits)} top={hits[0]['title'] if hits else '-'}")
+    step(
+        "search(向量+关键词RRF)",
+        ok,
+        f"hits={len(hits)} top={hits[0]['title'] if hits else '-'}",
+    )
 
     r = c.post("/search", json={"q": "RRF 融合排序"})
     hits2 = r.json().get("results", [])
@@ -170,7 +201,11 @@ def main() -> int:
     r = c.post("/chat", json={"question": "系统的数据库连接配置在哪里？"})
     cj = r.json()
     ok = r.status_code == 200 and bool(cj.get("answer")) and not cj.get("blocked")
-    step("chat(真实LLM)", ok, f"answer={str(cj.get('answer'))[:80]}… cites={len(cj.get('citations', []))}")
+    step(
+        "chat(真实LLM)",
+        ok,
+        f"answer={str(cj.get('answer'))[:80]}… cites={len(cj.get('citations', []))}",
+    )
 
     # ---------- 6. 解锁 + 建密钥条目 + reveal ----------
     r = c.post("/secrets/unlock", json={"ok": True})
@@ -178,15 +213,23 @@ def main() -> int:
 
     sid = str(uuid.uuid4())
     dek = os.urandom(32)
-    secret_plain = json.dumps({"username": "deploy", "password": "p@ss-联调-99"}, ensure_ascii=False)
+    secret_plain = json.dumps(
+        {"username": "deploy", "password": "p@ss-联调-99"}, ensure_ascii=False
+    )
     content_ct = mc.b64e(mc.aead_seal(dek, secret_plain.encode(), mc.AAD_ENTRY + sid))
     # 解出管理员私钥并恢复公钥（模拟浏览器解锁后拿到的密钥材料）
     enc_admin = mc.derive_enc_key(MP_ADMIN, mc.b64d(m["salt_enc"]))
-    priv_a = mc.aead_open(enc_admin, mc.b64d(m["priv_wrapped"]), mc.AAD_USER_PRIV + uid_a)
+    priv_a = mc.aead_open(
+        enc_admin, mc.b64d(m["priv_wrapped"]), mc.AAD_USER_PRIV + uid_a
+    )
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-    pub_a = X25519PrivateKey.from_private_bytes(priv_a).public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+    pub_a = (
+        X25519PrivateKey.from_private_bytes(priv_a)
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    )
     body = {
         "id": sid,
         "name": "生产数据库",
@@ -194,11 +237,17 @@ def main() -> int:
         "env": "prod",
         "tags": ["db"],
         "content_ct": content_ct,
-        "dek_wrapped_org": mc.b64e(mc.ecies_seal(org["pub"], dek, mc.AAD_ORG_DEK + sid)),
-        "grants": [{
-            "user_id": uid_a,
-            "wrapped_dek": mc.b64e(mc.ecies_seal(pub_a, dek, mc.AAD_DEK + sid + ":" + uid_a)),
-        }],
+        "dek_wrapped_org": mc.b64e(
+            mc.ecies_seal(org["pub"], dek, mc.AAD_ORG_DEK + sid)
+        ),
+        "grants": [
+            {
+                "user_id": uid_a,
+                "wrapped_dek": mc.b64e(
+                    mc.ecies_seal(pub_a, dek, mc.AAD_DEK + sid + ":" + uid_a)
+                ),
+            }
+        ],
     }
 
     r = c.post("/secrets", json=body)
@@ -207,8 +256,12 @@ def main() -> int:
 
     rv = c.get(f"/secrets/{sid}/reveal").json()
     try:
-        dek2 = mc.ecies_open(priv_a, mc.b64d(rv["wrapped_dek"]), mc.AAD_DEK + sid + ":" + uid_a)
-        plain = mc.aead_open(dek2, mc.b64d(rv["content_ct"]), mc.AAD_ENTRY + sid).decode()
+        dek2 = mc.ecies_open(
+            priv_a, mc.b64d(rv["wrapped_dek"]), mc.AAD_DEK + sid + ":" + uid_a
+        )
+        plain = mc.aead_open(
+            dek2, mc.b64d(rv["content_ct"]), mc.AAD_ENTRY + sid
+        ).decode()
         ok = plain == secret_plain
         note = "解密一致"
     except Exception as e:
@@ -219,34 +272,54 @@ def main() -> int:
     # （先锁回自己，确认锁定后 reveal 被拒）
     c.post("/secrets/lock")
     r = c.get(f"/secrets/{sid}/reveal")
-    step("lock 后 reveal 拒绝(423/403)", r.status_code in (403, 423), f"http={r.status_code}")
+    step(
+        "lock 后 reveal 拒绝(423/403)",
+        r.status_code in (403, 423),
+        f"http={r.status_code}",
+    )
     c.post("/secrets/unlock", json={"ok": True})
 
     # ---------- 7. 第二用户（跨用户 403 验收） ----------
-    r = c.post("/admin/users", json={"username": "bob", "display_name": "测试用户", "role": "member"})
+    r = c.post(
+        "/admin/users",
+        json={"username": "bob", "display_name": "测试用户", "role": "member"},
+    )
     bob_token = r.json().get("setup_token", "")
     step("admin/users(开号 bob)", r.status_code == 200 and bool(bob_token))
 
     r = c.get("/auth/setup-info", params={"token": bob_token}).json()
     uid_b = r.get("user_id", "")
     mb = build_material(MP_BOB, uid_b, org=None)
-    r = c.post("/auth/setup", json={"token": bob_token, "display_name": "测试用户", **mb})
-    step("setup(bob, 无需org)", r.status_code == 200, f"http={r.status_code} needs_org={r.get('needs_org') if isinstance(r, dict) else ''}")
+    r = c.post(
+        "/auth/setup", json={"token": bob_token, "display_name": "测试用户", **mb}
+    )
+    step(
+        "setup(bob, 无需org)",
+        r.status_code == 200,
+        f"http={r.status_code} needs_org={r.get('needs_org') if isinstance(r, dict) else ''}",
+    )
 
     chb = c.post("/auth/challenge", json={"username": "bob"}).json()
     proofb = mc.hmac_hex(bytes.fromhex(mb["auth_verifier"]), chb["challenge"])
-    r = c.post("/auth/login", json={"challenge_id": chb["challenge_id"], "proof": proofb})
+    r = c.post(
+        "/auth/login", json={"challenge_id": chb["challenge_id"], "proof": proofb}
+    )
     step("login(bob)", r.status_code == 200)
 
     r = c.get(f"/secrets/{sid}/reveal")
-    step("跨用户 reveal 403", r.status_code == 403, f"http={r.status_code} {r.text[:80]}")
+    step(
+        "跨用户 reveal 403", r.status_code == 403, f"http={r.status_code} {r.text[:80]}"
+    )
     r = c.get("/secrets")
     names = [s["name"] for s in r.json().get("items", r.json().get("secrets", []))]
     step("跨用户列表不可见", all(n != "生产数据库" for n in names), f"bob可见={names}")
 
     # bob 的搜索应该正常（文档全员可见）
     r = c.post("/search", json={"q": "部署方式"})
-    step("bob search 正常", r.status_code == 200 and len(r.json().get("results", [])) >= 1)
+    step(
+        "bob search 正常",
+        r.status_code == 200 and len(r.json().get("results", [])) >= 1,
+    )
 
     # ---------- 8. 审计（切回 admin 会话，避免被 bob 的 cookie 覆盖） ----------
     cha = c.post("/auth/challenge", json={"username": "admin"}).json()
@@ -254,7 +327,13 @@ def main() -> int:
     c.post("/auth/login", json={"challenge_id": cha["challenge_id"], "proof": proofa})
     logs = c.get("/audit", params={"limit": "200"}).json().get("logs", [])
     actions = {row["action"] for row in logs}
-    need = {"doc_uploaded", "secret_created", "secret_revealed", "unlock", "login_failed"}
+    need = {
+        "doc_uploaded",
+        "secret_created",
+        "secret_revealed",
+        "unlock",
+        "login_failed",
+    }
     ok = need.issubset(actions)
     step("审计覆盖关键动作", ok, f"缺失={need - actions}")
 

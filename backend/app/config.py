@@ -13,7 +13,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # .env：仓库根 + backend/（均不覆盖已注入的环境变量）
-for _p in (Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[1] / ".env"):
+for _p in (
+    Path(__file__).resolve().parents[2] / ".env",
+    Path(__file__).resolve().parents[1] / ".env",
+):
     if _p.is_file():
         load_dotenv(_p, override=False)
 
