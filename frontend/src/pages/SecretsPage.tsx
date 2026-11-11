@@ -58,6 +58,13 @@ import {
   type ParseResult,
   type ParsedEntry,
 } from "../secrets/importer";
+import {
+  contentForTemplate,
+  guessTemplate,
+  templateById,
+  TEMPLATES,
+  type TemplateId,
+} from "../secrets/templates";
 
 interface SecretRow {
   id: string;
@@ -738,7 +745,7 @@ function ImportModal({
           project,
           env,
           tags: [],
-          content: e.content,
+          content: { ...e.content, type: guessTemplate(e.content) },
           folderId:
             defaultFolder && defaultFolder !== "root"
               ? defaultFolder
@@ -922,6 +929,7 @@ function CreateModal({
   const [tags, setTags] = useState("");
   const [content, setContent] = useState<SecretContent>({ ...EMPTY_CONTENT });
   const [cachedHit, setCachedHit] = useState<CachedHit | null>(null);
+  const [tplId, setTplId] = useState<TemplateId>("login");
 
   // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段
   useEffect(() => {
@@ -931,7 +939,9 @@ function CreateModal({
     setCachedHit(hit);
     if (hit.title) setName(hit.title);
     if (hit.project) setProject(hit.project);
-    setContent((c) => ({ ...c, ...suggestFields(hit) }));
+    const fields = suggestFields(hit);
+    setContent((c) => ({ ...c, ...fields }));
+    setTplId(guessTemplate({ ...EMPTY_CONTENT, ...fields }));
   }, [pendingRow]);
   const [busy, setBusy] = useState(false);
   const [orgPub, setOrgPub] = useState("");
@@ -965,7 +975,7 @@ function CreateModal({
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
-        content,
+        content: contentForTemplate(tplId, content),
       });
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       toast("已创建（内容仅存密文）");
@@ -1024,40 +1034,44 @@ function CreateModal({
           onChange={(e) => setTags(e.target.value)}
         />
       </Field>
-      <div className="row">
-        <Field label="用户名">
-          <input
-            type="text"
-            value={content.username}
-            onChange={(e) =>
-              setContent({ ...content, username: e.target.value })
-            }
-          />
-        </Field>
-        <Field label="密码">
-          <input
-            type="text"
-            value={content.password}
-            onChange={(e) =>
-              setContent({ ...content, password: e.target.value })
-            }
-          />
-        </Field>
-      </div>
-      <Field label="URL / 地址">
-        <input
-          type="text"
-          value={content.url}
-          onChange={(e) => setContent({ ...content, url: e.target.value })}
-        />
+      <Field label="类型">
+        <select
+          value={tplId}
+          onChange={(e) => setTplId(e.target.value as TemplateId)}
+        >
+          {TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <div className="muted" style={{ fontSize: 12 }}>
+          {templateById(tplId).desc}
+        </div>
       </Field>
-      <Field label="令牌 / 其他">
-        <input
-          type="text"
-          value={content.tokens}
-          onChange={(e) => setContent({ ...content, tokens: e.target.value })}
-        />
-      </Field>
+      {templateById(tplId).fields.map((f) => (
+        <Field key={f.key} label={f.label}>
+          {f.multiline ? (
+            <textarea
+              rows={4}
+              value={content[f.key] ?? ""}
+              onChange={(e) =>
+                setContent({ ...content, [f.key]: e.target.value })
+              }
+              placeholder={f.placeholder ?? ""}
+            />
+          ) : (
+            <input
+              type="text"
+              value={content[f.key] ?? ""}
+              onChange={(e) =>
+                setContent({ ...content, [f.key]: e.target.value })
+              }
+              placeholder={f.placeholder ?? ""}
+            />
+          )}
+        </Field>
+      ))}
       <Field label="备注">
         <textarea
           value={content.notes}
@@ -1291,6 +1305,14 @@ function ViewModal({
   if (content !== null) {
     contentBody = (
       <div className="kv-list">
+        {content.type && (
+          <>
+            <span className="k">类型</span>
+            <span>
+              <Badge tone="info">{templateById(content.type).label}</Badge>
+            </span>
+          </>
+        )}
         {content.username && (
           <>
             <span className="k">用户名</span>

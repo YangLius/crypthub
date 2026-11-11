@@ -127,6 +127,8 @@ export const loginProof = deriveAuthProofKey;
 // ---------- 条目 ----------
 
 export interface SecretContent {
+  /** 条目类型模板标识（见 secrets/templates.ts），旧数据无此字段。 */
+  type?: string;
   username?: string;
   password?: string;
   url?: string;
