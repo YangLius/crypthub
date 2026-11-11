@@ -4,6 +4,7 @@
   _split_units 只做逻辑切分（标题行 / 函数起始 / 行），不做长度累积；
   chunk_text 负责累积（≤MAX_LEN 才追加）、最小块与 10% 重叠尾部携带。
 """
+
 from __future__ import annotations
 
 import re
@@ -12,11 +13,15 @@ from dataclasses import dataclass
 TARGET = 600
 MAX_LEN = 800
 OVERLAP_RATIO = 0.1
-_OVERLAP_CHARS = 80   # MAX_LEN * OVERLAP_RATIO
-_MIN_EMIT = 200       # 小于此长度不单独成块（并入后续内容）
+_OVERLAP_CHARS = 80  # MAX_LEN * OVERLAP_RATIO
+_MIN_EMIT = 200  # 小于此长度不单独成块（并入后续内容）
 
-_RE_HEADING = re.compile(r"^(#{1,6}\s+.+|【.+】|第[一二三四五六七八九十\d]+[章节部分]|[一二三四五六七八九十]+、|\d+(\.\d+)*\s+\S.*)$")
-_RE_FUNC = re.compile(r"^\s*(?:async\s+)?(?:def|class|function|func|fn|public|private|protected|export)\b")
+_RE_HEADING = re.compile(
+    r"^(#{1,6}\s+.+|【.+】|第[一二三四五六七八九十\d]+[章节部分]|[一二三四五六七八九十]+、|\d+(\.\d+)*\s+\S.*)$"
+)
+_RE_FUNC = re.compile(
+    r"^\s*(?:async\s+)?(?:def|class|function|func|fn|public|private|protected|export)\b"
+)
 
 
 @dataclass
@@ -75,7 +80,7 @@ def chunk_text(text: str) -> list[Chunk]:
         step = MAX_LEN - _OVERLAP_CHARS
         i = 0
         while i < len(t):
-            piece = t[i:i + MAX_LEN].strip()
+            piece = t[i : i + MAX_LEN].strip()
             if len(piece) >= 20:
                 chunks.append(Chunk(len(chunks), anchor or "正文", piece))
             if i + MAX_LEN >= len(t):

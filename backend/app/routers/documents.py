@@ -1,4 +1,5 @@
 """文档路由：上传（含客户端预扫结果登记）、列表、元数据更新、删除、重建索引。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -70,9 +71,12 @@ async def upload(
 
     sha = hashlib.sha256(raw).hexdigest()
     dup = await db.fetch_one(
-        "SELECT id, title FROM documents WHERE sha256 = :sha", {"sha": sha})
+        "SELECT id, title FROM documents WHERE sha256 = :sha", {"sha": sha}
+    )
     if dup:
-        raise HTTPException(409, f"内容重复（已有《{dup['title']}》），如需更新请先删除")
+        raise HTTPException(
+            409, f"内容重复（已有《{dup['title']}》），如需更新请先删除"
+        )
 
     # 文本类文件服务端兜底扫描在 worker 解析后统一进行（模式 B），
     # 这里只登记客户端预扫产生的占位符。
@@ -82,8 +86,18 @@ async def upload(
         " project, tags, status, uploaded_by)"
         " VALUES (:t, :f, :m, :sz, :sha, :fp, :pj, CAST(:tags AS jsonb), 'processing', :uid)"
         " RETURNING id, title, status",
-        {"t": title, "f": filename, "m": mime, "sz": len(raw), "sha": sha, "fp": rel,
-         "pj": (project or "")[:64], "tags": db.j(_parse_tags(tags)), "uid": ctx.user["id"]})
+        {
+            "t": title,
+            "f": filename,
+            "m": mime,
+            "sz": len(raw),
+            "sha": sha,
+            "fp": rel,
+            "pj": (project or "")[:64],
+            "tags": db.j(_parse_tags(tags)),
+            "uid": ctx.user["id"],
+        },
+    )
     if row is None:
         raise HTTPException(500, "入库失败")
 
@@ -96,18 +110,28 @@ async def upload(
         raise HTTPException(500, f"文件保存失败: {e}") from e
 
     await queue.enqueue_index(row["id"])
-    await audit.audit("doc_uploaded", user=ctx.user, target_type="document", target_id=row["id"],
-                      ip=ctx.ip, detail={"size": len(raw), "client_redacted": client_redacted == "true"})
+    await audit.audit(
+        "doc_uploaded",
+        user=ctx.user,
+        target_type="document",
+        target_id=row["id"],
+        ip=ctx.ip,
+        detail={"size": len(raw), "client_redacted": client_redacted == "true"},
+    )
     return {"id": row["id"], "title": row["title"], "status": "processing"}
 
 
 @router.get("")
-async def list_documents(request: Request, project: str = "", tag: str = "", limit: int = 200):
+async def list_documents(
+    request: Request, project: str = "", tag: str = "", limit: int = 200
+):
     await current_user(request)
-    sql = ("SELECT d.id, d.title, d.filename, d.mime, d.size_bytes, d.project, d.tags,"
-           " d.status, d.error, d.chunk_count, d.secret_ref, d.created_at, d.updated_at,"
-           " u.username AS uploader"
-           " FROM documents d LEFT JOIN users u ON u.id = d.uploaded_by WHERE 1=1")
+    sql = (
+        "SELECT d.id, d.title, d.filename, d.mime, d.size_bytes, d.project, d.tags,"
+        " d.status, d.error, d.chunk_count, d.secret_ref, d.created_at, d.updated_at,"
+        " u.username AS uploader"
+        " FROM documents d LEFT JOIN users u ON u.id = d.uploaded_by WHERE 1=1"
+    )
     params: dict = {"limit": min(limit, 500)}
     if project:
         sql += " AND d.project = :pj"
@@ -127,7 +151,8 @@ async def list_pending(request: Request):
         "SELECT p.id, p.slug, p.kind, p.source_hint, p.status, p.created_at, d.title AS doc_title"
         " FROM pending_secrets p LEFT JOIN documents d ON d.id = p.source_doc_id"
         " WHERE p.created_by = :uid AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 200",
-        {"uid": ctx.user["id"]})
+        {"uid": ctx.user["id"]},
+    )
     return {"pending": rows}
 
 
@@ -137,7 +162,8 @@ async def get_document(doc_id: str, request: Request):
     d = await db.fetch_one(
         "SELECT id, title, filename, mime, size_bytes, project, tags, status, error,"
         " chunk_count, secret_ref, created_at, updated_at FROM documents WHERE id = :id",
-        {"id": doc_id})
+        {"id": doc_id},
+    )
     if not d:
         raise HTTPException(404, "文档不存在")
     return d
@@ -150,7 +176,9 @@ async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
     if not d:
         raise HTTPException(404, "文档不存在")
     if body.secret_ref:
-        s = await db.fetch_one("SELECT id FROM secrets WHERE id = :sid", {"sid": body.secret_ref})
+        s = await db.fetch_one(
+            "SELECT id FROM secrets WHERE id = :sid", {"sid": body.secret_ref}
+        )
         if not s:
             raise HTTPException(404, "关联的密钥条目不存在")
     await db.execute(
@@ -159,10 +187,22 @@ async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
         " tags = COALESCE(CAST(:tags AS jsonb), tags),"
         " secret_ref = CASE WHEN :has_ref THEN :ref ELSE secret_ref END,"
         " updated_at = now() WHERE id = :id",
-        {"t": body.title, "pj": body.project,
-         "tags": db.j(body.tags) if body.tags is not None else None,
-         "has_ref": body.secret_ref is not None, "ref": body.secret_ref, "id": doc_id})
-    await audit.audit("doc_updated", user=ctx.user, target_type="document", target_id=doc_id, ip=ctx.ip)
+        {
+            "t": body.title,
+            "pj": body.project,
+            "tags": db.j(body.tags) if body.tags is not None else None,
+            "has_ref": body.secret_ref is not None,
+            "ref": body.secret_ref,
+            "id": doc_id,
+        },
+    )
+    await audit.audit(
+        "doc_updated",
+        user=ctx.user,
+        target_type="document",
+        target_id=doc_id,
+        ip=ctx.ip,
+    )
     return {"ok": True}
 
 
@@ -170,15 +210,23 @@ async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
 async def report_pending(doc_id: str, body: PendingBody, request: Request):
     """客户端预扫（模式 A）命中的占位符登记为待认领。"""
     ctx: Ctx = await current_user(request)
-    d = await db.fetch_one("SELECT id, title FROM documents WHERE id = :id", {"id": doc_id})
+    d = await db.fetch_one(
+        "SELECT id, title FROM documents WHERE id = :id", {"id": doc_id}
+    )
     if not d:
         raise HTTPException(404, "文档不存在")
     for item in body.items:
         await db.execute(
             "INSERT INTO pending_secrets (slug, kind, source_doc_id, source_hint, created_by)"
             " VALUES (:slug, :kind, :doc, :hint, :uid) ON CONFLICT (slug) DO NOTHING",
-            {"slug": item.slug, "kind": item.kind, "doc": doc_id,
-             "hint": f"{d['title']} · 上传预扫", "uid": ctx.user["id"]})
+            {
+                "slug": item.slug,
+                "kind": item.kind,
+                "doc": doc_id,
+                "hint": f"{d['title']} · 上传预扫",
+                "uid": ctx.user["id"],
+            },
+        )
     return {"ok": True, "count": len(body.items)}
 
 
@@ -190,16 +238,25 @@ async def reindex(doc_id: str, request: Request):
         raise HTTPException(404, "文档不存在")
     await db.execute(
         "UPDATE documents SET status='processing', error=NULL, updated_at=now() WHERE id=:id",
-        {"id": doc_id})
+        {"id": doc_id},
+    )
     await queue.enqueue_index(doc_id)
-    await audit.audit("doc_reindexed", user=ctx.user, target_type="document", target_id=doc_id, ip=ctx.ip)
+    await audit.audit(
+        "doc_reindexed",
+        user=ctx.user,
+        target_type="document",
+        target_id=doc_id,
+        ip=ctx.ip,
+    )
     return {"ok": True, "status": "processing"}
 
 
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, request: Request):
     ctx: Ctx = await current_user(request)
-    d = await db.fetch_one("SELECT id, file_path, title FROM documents WHERE id = :id", {"id": doc_id})
+    d = await db.fetch_one(
+        "SELECT id, file_path, title FROM documents WHERE id = :id", {"id": doc_id}
+    )
     if not d:
         raise HTTPException(404, "文档不存在")
     await db.execute("DELETE FROM documents WHERE id = :id", {"id": doc_id})
@@ -210,8 +267,14 @@ async def delete_document(doc_id: str, request: Request):
     except (OSError, ValueError) as e:
         # 文件缺失/路径异常不影响删除（数据库行已删）
         print(f"[documents] 清理文件失败 doc={doc_id}: {e}", flush=True)
-    await audit.audit("doc_deleted", user=ctx.user, target_type="document", target_id=doc_id,
-                      ip=ctx.ip, detail={"title": d["title"]})
+    await audit.audit(
+        "doc_deleted",
+        user=ctx.user,
+        target_type="document",
+        target_id=doc_id,
+        ip=ctx.ip,
+        detail={"title": d["title"]},
+    )
     return {"ok": True}
 
 
@@ -220,7 +283,8 @@ async def reindex_stale(request: Request):
     """重建所有 processing 卡住超过 10 分钟的任务（自愈入口）。"""
     await current_user(request)
     rows = await db.fetch_all(
-        "SELECT id FROM documents WHERE status='processing' AND updated_at < now() - interval '10 minutes'")
+        "SELECT id FROM documents WHERE status='processing' AND updated_at < now() - interval '10 minutes'"
+    )
     for r in rows:
         await queue.enqueue_index(r["id"])
     return {"ok": True, "queued": len(rows)}

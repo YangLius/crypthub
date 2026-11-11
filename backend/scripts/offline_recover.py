@@ -14,6 +14,7 @@
 
 输出：recovered.json（条目明文数组；用完即删）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,29 +46,40 @@ def unwrap_org_priv(pkg: dict, code: str) -> bytes:
     salt_raw = pkg["offline_salt_b64"]
     # 兼容两种编码：hex（offline-package 端点导出）与 base64
     try:
-        salt = bytes.fromhex(salt_raw) if all(c in "0123456789abcdefABCDEF" for c in salt_raw) \
-            and len(salt_raw) == 32 else base64.b64decode(salt_raw)
+        salt = (
+            bytes.fromhex(salt_raw)
+            if all(c in "0123456789abcdefABCDEF" for c in salt_raw)
+            and len(salt_raw) == 32
+            else base64.b64decode(salt_raw)
+        )
     except (ValueError, binascii.Error):
         salt = base64.b64decode(salt_raw)
     kdf = pkg.get("kdf", {})
-    expected = {"algo": "argon2id", "m_kb": mc.ARGON2_M // 1024, "t": mc.ARGON2_T, "p": mc.ARGON2_P}
+    expected = {
+        "algo": "argon2id",
+        "m_kb": mc.ARGON2_M // 1024,
+        "t": mc.ARGON2_T,
+        "p": mc.ARGON2_P,
+    }
     for k, v in expected.items():
         if kdf.get(k) != v:
             raise SystemExit(f"恢复包 KDF 参数不匹配: {k}={kdf.get(k)!r}，期望 {v!r}")
     key = mc.argon2id(code.encode(), salt)
-    return mc.aead_open(key, base64.b64decode(pkg["org_priv_offline_wrapped_b64"]),
-                        mc.AAD_ORG_OFFLINE)
+    return mc.aead_open(
+        key, base64.b64decode(pkg["org_priv_offline_wrapped_b64"]), mc.AAD_ORG_OFFLINE
+    )
 
 
 def fetch_rows(db_url: str) -> list[dict]:
     try:
         import psycopg
     except ImportError as e:
-        raise SystemExit("请先安装 psycopg: pip install \"psycopg[binary]\"") from e
+        raise SystemExit('请先安装 psycopg: pip install "psycopg[binary]"') from e
     with psycopg.connect(db_url) as conn:
         cur = conn.execute(
             "SELECT id, name, project, env, version, content_ct, dek_wrapped_org FROM secrets"
-            " ORDER BY project, name")
+            " ORDER BY project, name"
+        )
         cols = [d.name for d in cur.description or ()]
         return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
     return []
@@ -75,7 +87,9 @@ def fetch_rows(db_url: str) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="离线恢复：解开全部密钥条目（本地执行）")
-    ap.add_argument("--package", required=True, help="离线恢复包 JSON（管理员后台导出）")
+    ap.add_argument(
+        "--package", required=True, help="离线恢复包 JSON（管理员后台导出）"
+    )
     ap.add_argument("--code", required=True, help="离线恢复码（纸上那张）")
     ap.add_argument("--database", default=None, help="postgresql:// 只读连接串")
     ap.add_argument("--out", default="recovered.json", help="输出文件（用完即删）")
@@ -100,13 +114,22 @@ def main() -> None:
             dek = mc.open_org_wrapped_dek(org_priv, r["dek_wrapped_org"], str(r["id"]))
             plain = mc.decrypt_secret_content(dek, r["content_ct"], str(r["id"]))
             content = json.loads(plain.decode("utf-8"))
-            out.append({"name": r["name"], "project": r["project"], "env": r["env"],
-                        "version": r["version"], "content": content})
+            out.append(
+                {
+                    "name": r["name"],
+                    "project": r["project"],
+                    "env": r["env"],
+                    "version": r["version"],
+                    "content": content,
+                }
+            )
             print(f"  ✔ {r['name']}")
         except Exception as e:
             out.append({"name": r["name"], "error": f"{type(e).__name__}: {e}"})
             print(f"  ✘ {r['name']}: {e}")
-    Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(args.out).write_text(
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"完成 → {args.out}（查看后请立即安全删除）")
 
 

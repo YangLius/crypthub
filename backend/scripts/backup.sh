@@ -15,7 +15,7 @@ RAW="$BACKUP_DIR/kb_${STAMP}.sql.gz"
 ENC="$RAW.enc"
 
 echo "[backup] pg_dump → gzip"
-pg_dump "$DATABASE_URL" --no-owner --no-privileges | gzip -6 > "$RAW"
+pg_dump "$DATABASE_URL" --no-owner --no-privileges | gzip -6 >"$RAW"
 
 echo "[backup] AES-256 加密（PBKDF2）"
 openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RAW" -out "$ENC" -pass file:"$BACKUP_PASS_FILE"

@@ -1,4 +1,5 @@
 """检索路由（设计 /search）：语义 + 关键词混合检索。"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,12 +26,14 @@ async def search(body: SearchBody, request: Request):
         raise HTTPException(503, f"检索服务不可用: {e}") from e
     results = []
     for r in rows:
-        results.append({
-            "document_id": r["document_id"],
-            "title": r["title"],
-            "anchor": r["anchor"],
-            "idx": r["idx"],
-            "snippet": r["text"][:300],
-            "score": round(min(0.99, float(r.get("rrf", 0)) * 10), 4),
-        })
+        results.append(
+            {
+                "document_id": r["document_id"],
+                "title": r["title"],
+                "anchor": r["anchor"],
+                "idx": r["idx"],
+                "snippet": r["text"][:300],
+                "score": round(min(0.99, float(r.get("rrf", 0)) * 10), 4),
+            }
+        )
     return {"results": results, "query": body.q}

@@ -1,4 +1,5 @@
 """单测：脱敏闸规则（对应设计第 6 节入库闸规则集）。"""
+
 from app import gates
 
 
@@ -34,7 +35,7 @@ def test_connstr_redis():
 def test_kv_hit():
     hits = gates.scan("password: hunter2secret")
     assert any(h.kind == "kv" for h in hits)
-    hits2 = gates.scan("api_key = \"abcd1234\"")
+    hits2 = gates.scan('api_key = "abcd1234"')
     assert any(h.kind == "kv" for h in hits2)
 
 
@@ -47,7 +48,7 @@ def test_entropy_hit():
     text = f"token: {tok}"
     hits = gates.scan(text)
     # token 也是 kv 关键字：命中发生即可，且必须覆盖 ghp_ 串
-    assert hits and tok in text[hits[0].start:hits[0].end]
+    assert hits and tok in text[hits[0].start : hits[0].end]
     # 纯高熵（无前缀）
     hits2 = gates.scan("signature: Xk9pQ2rS7tU8vW3xY4zA5bC6dE7fG8h")
     assert any(h.kind == "entropy" for h in hits2)
@@ -55,7 +56,10 @@ def test_entropy_hit():
 
 def test_entropy_no_hit_for_english_word():
     # 长英文单词不应被当凭据（服务端 strict 模式要求字母+数字混用）
-    assert not any(h.kind == "entropy" for h in gates.scan("internationalization constant", strict=True))
+    assert not any(
+        h.kind == "entropy"
+        for h in gates.scan("internationalization constant", strict=True)
+    )
 
 
 def test_normal_text_clean():
@@ -81,7 +85,10 @@ def test_redact_replacement_and_order():
     slugs = [p["slug"] for p in rd.pending]
     for i, slug in enumerate(slugs):
         assert rd.text.index("{{secret:" + slug + "}}") < (
-            rd.text.index("{{secret:" + slugs[i + 1] + "}}") if i + 1 < len(slugs) else 10**9)
+            rd.text.index("{{secret:" + slugs[i + 1] + "}}")
+            if i + 1 < len(slugs)
+            else 10**9
+        )
 
 
 def test_no_overlap_duplicates():

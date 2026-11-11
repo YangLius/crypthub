@@ -2,6 +2,7 @@
 
 约定：所有 SQL 均为代码内静态字符串，用户输入一律走绑定参数（:name）。
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,9 @@ _maker: async_sessionmaker[AsyncSession] | None = None
 def _sessionmaker() -> async_sessionmaker[AsyncSession]:
     global _engine, _maker
     if _maker is None:
-        _engine = create_async_engine(settings.database_url, pool_pre_ping=True, pool_size=10)
+        _engine = create_async_engine(
+            settings.database_url, pool_pre_ping=True, pool_size=10
+        )
         _maker = async_sessionmaker(_engine, expire_on_commit=False)
     return _maker
 
@@ -38,11 +41,29 @@ async def close_engine() -> None:
 
 
 async def init_schema() -> None:
-    """执行 schema.sql（全部 IF NOT EXISTS，幂等）。"""
+    """执行 schema.sql（全部 IF NOT EXISTS，幂等）。
+
+    asyncpg 预处理语句不允许一条报文带多条命令，因此按分号拆分逐条执行；
+    DDL 无绑定参数，用 exec_driver_sql 绕开 text() 的参数解析。
+    """
     sql = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
     async with _sessionmaker()() as session:
-        await session.execute(text(sql))
+        conn = await session.connection()
+        for stmt in _split_statements(sql):
+            await conn.exec_driver_sql(stmt)
         await session.commit()
+
+
+def _split_statements(sql: str) -> list[str]:
+    """按行尾分号拆分；仅注释的空块丢弃（schema 内无字符串字面量含分号）。"""
+    out: list[str] = []
+    for chunk in sql.split(";"):
+        if any(
+            line.strip() and not line.strip().startswith("--")
+            for line in chunk.splitlines()
+        ):
+            out.append(chunk.strip())
+    return out
 
 
 def _rows(result) -> list[dict]:
@@ -80,11 +101,6 @@ async def transact(statements: list[tuple[str, dict | None]]) -> None:
         for sql, params in statements:
             await session.execute(text(sql), params or {})
         await session.commit()
-
-
-def vec(v: list[float]) -> str:
-    """向量 → pgvector 文本字面量（经 cast(:v AS vector) 绑定）。"""
-    return "[" + ",".join(f"{x:.7g}" for x in v) + "]"
 
 
 def j(obj) -> str:

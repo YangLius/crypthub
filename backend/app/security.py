@@ -3,6 +3,7 @@
 会话存 Redis（TTL 滑动），Cookie HttpOnly + SameSite=Strict。
 停用账号在每次请求的用户加载点即时失效（status 检查）。
 """
+
 from __future__ import annotations
 
 import hmac
@@ -37,6 +38,7 @@ async def close_redis() -> None:
 
 # ---------- 会话 ----------
 
+
 @dataclass
 class SessionData:
     token: str
@@ -45,14 +47,19 @@ class SessionData:
     unlocked: bool = False
 
     def to_json(self) -> str:
-        return json.dumps({"user_id": self.user_id, "role": self.role, "unlocked": self.unlocked})
+        return json.dumps(
+            {"user_id": self.user_id, "role": self.role, "unlocked": self.unlocked}
+        )
 
 
 async def create_session(user_id: str, role: str) -> str:
     token = pysecrets.token_urlsafe(32)
     r = redis_client()
-    await r.set(f"kb:sess:{token}", SessionData(token, user_id, role).to_json(),
-                ex=settings.session_ttl)
+    await r.set(
+        f"kb:sess:{token}",
+        SessionData(token, str(user_id), str(role)).to_json(),
+        ex=settings.session_ttl,
+    )
     return token
 
 
@@ -63,8 +70,12 @@ async def get_session(token: str) -> SessionData | None:
         return None
     try:
         d = json.loads(raw)
-        s = SessionData(token=token, user_id=str(d["user_id"]), role=str(d["role"]),
-                        unlocked=bool(d.get("unlocked", False)))
+        s = SessionData(
+            token=token,
+            user_id=str(d["user_id"]),
+            role=str(d["role"]),
+            unlocked=bool(d.get("unlocked", False)),
+        )
     except (ValueError, KeyError, TypeError):
         # 会话数据损坏：当作已失效处理
         await destroy_session(token)
@@ -80,16 +91,20 @@ async def destroy_session(token: str) -> None:
 async def set_unlocked(token: str, unlocked: bool) -> None:
     s = await get_session(token)
     if s:
-        await redis_client().set(f"kb:sess:{token}", s.to_json() if not unlocked else
-                                 json.dumps({"user_id": s.user_id, "role": s.role, "unlocked": True}),
-                                 ex=settings.session_ttl)
+        s.unlocked = unlocked
+        await redis_client().set(
+            f"kb:sess:{token}",
+            s.to_json(),
+            ex=settings.session_ttl,
+        )
 
 
 # ---------- 请求上下文 / 依赖 ----------
 
+
 @dataclass
 class Ctx:
-    user: dict          # users 行
+    user: dict  # users 行
     session: SessionData
     ip: str
 
@@ -102,9 +117,12 @@ async def current_user(request: Request) -> Ctx:
     if not sess:
         raise HTTPException(401, "会话已失效")
     from . import db  # 局部导入避免环
+
     user = await db.fetch_one(
         "SELECT id, username, display_name, role, status, salt_auth, salt_enc, auth_verifier,"
-        " local_check_ct FROM users WHERE id = :uid", {"uid": sess.user_id})
+        " local_check_ct FROM users WHERE id = :uid",
+        {"uid": sess.user_id},
+    )
     if not user or user["status"] != "active":
         await destroy_session(token)
         raise HTTPException(401, "账号不可用")
@@ -125,8 +143,14 @@ def require_unlocked(ctx: Ctx) -> None:
 
 def set_cookie(response: Response, token: str) -> None:
     response.set_cookie(
-        COOKIE_NAME, token, max_age=settings.session_ttl, httponly=True,
-        samesite="strict", secure=settings.cookie_secure, path="/")
+        COOKIE_NAME,
+        token,
+        max_age=settings.session_ttl,
+        httponly=True,
+        samesite="strict",
+        secure=settings.cookie_secure,
+        path="/",
+    )
 
 
 def clear_cookie(response: Response) -> None:
@@ -134,6 +158,7 @@ def clear_cookie(response: Response) -> None:
 
 
 # ---------- 限流（Redis INCR + EXPIRE） ----------
+
 
 async def rate_limit(key: str, limit: int, window: int) -> None:
     r = redis_client()

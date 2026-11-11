@@ -1,7 +1,8 @@
 -- ============================================================
 -- 私有知识库与密钥管理系统 — 数据库 DDL（实现版）
 -- 依据：《开发文档与密钥管理系统-设计方案v1.1》第 7 节数据模型
--- 目标库：PostgreSQL 16 + pgvector
+-- 目标库：PostgreSQL 16+（实现偏差：不依赖 pgvector 扩展——目标库可能未安装；
+--   embedding 存 real[]，向量检索为 Python 侧精确余弦扫描，与运行时 schema.sql 保持一致）
 -- 本文件由 api 启动时幂等执行（CREATE TABLE IF NOT EXISTS），
 -- 同时作为数据库结构的唯一权威来源（与 docs 同步维护）。
 --
@@ -12,7 +13,6 @@
 --   * audit_logs 只记动作，绝不记内容。
 -- ============================================================
 
-CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ---------- 账号与密钥层级 ----------
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     anchor       text NOT NULL DEFAULT '',    -- 标题/函数等锚点
     text         text NOT NULL,
     tsv          tsvector,
-    embedding    vector,
+    embedding    real[],                       -- 512 维 float 数组（无 pgvector 方案）
     dim          integer,
     created_at   timestamptz NOT NULL DEFAULT now()
 );

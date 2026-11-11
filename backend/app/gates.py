@@ -8,6 +8,7 @@
 
 命中 → 替换为 {{secret:<slug>}}；返回替换清单供待认领队列使用（真实值不入库）。
 """
+
 from __future__ import annotations
 
 import math
@@ -20,31 +21,47 @@ PLACEHOLDER_SUFFIX = "}}"
 
 # 已知前缀（最长的优先，避免提前截断匹配）
 _PREFIXES = [
-    "-----BEGIN OPENSSH PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----",
-    "-----BEGIN EC PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----",
-    "github_pat_", "ghp_", "gho_", "ghu_", "ghs_", "xoxb-", "xoxp-", "xoxa-",
-    "AKIA", "ASIA", "sk-ant-", "sk-", "Bearer ",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN EC PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+    "github_pat_",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "AKIA",
+    "ASIA",
+    "sk-ant-",
+    "sk-",
+    "Bearer ",
 ]
 
 _RE_CONN = re.compile(
     r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|rediss|mssql|ftp)://"
-    r"[^\s:/@]+:[^\s@/]+@[^\s\"'<>]+", re.IGNORECASE)
+    r"[^\s:/@]+:[^\s@/]+@[^\s\"'<>]+",
+    re.IGNORECASE,
+)
 
 _RE_KV = re.compile(
     r"(?i)(?<![A-Za-z0-9_{])(?:password|passwd|pwd|secret|token|api[_-]?key|"
     r"access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret)"
     r"\s*[:=]\s*(?!\{\{secret:)"
-    r"(\"[^\"]{4,}\"|'[^']{4,}'|[^\s,;\"'`]{4,})")
+    r"(\"[^\"]{4,}\"|'[^']{4,}'|[^\s,;\"'`]{4,})"
+)
 
 _RE_TOKEN_CAND = re.compile(r"[A-Za-z0-9+/_.=\-]{20,}")
 
 
 @dataclass
 class Hit:
-    kind: str        # prefix / connstr / kv / entropy
+    kind: str  # prefix / connstr / kv / entropy
     start: int
     end: int
-    value: str       # 命中原文（仅存于调用方内存，绝不入库/入日志）
+    value: str  # 命中原文（仅存于调用方内存，绝不入库/入日志）
 
 
 @dataclass
@@ -154,7 +171,7 @@ def redact(text: str, *, strict: bool = True) -> RedactResult:
     pending: list[dict] = []
     used_slugs = set()
     for h in hits:
-        out.append(text[pos:h.start])
+        out.append(text[pos : h.start])
         slug = pysecrets.token_hex(4)
         while slug in used_slugs:  # 极小概率碰撞
             slug = pysecrets.token_hex(4)
@@ -167,13 +184,52 @@ def redact(text: str, *, strict: bool = True) -> RedactResult:
 
 
 def is_text_mime(mime: str, filename: str) -> bool:
-    text_exts = (".md", ".markdown", ".txt", ".csv", ".tsv", ".log", ".json", ".yaml",
-                 ".yml", ".toml", ".ini", ".conf", ".py", ".js", ".ts", ".jsx", ".tsx",
-                 ".go", ".rs", ".java", ".kt", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb",
-                 ".php", ".sh", ".bat", ".ps1", ".sql", ".html", ".css", ".xml", ".env")
+    text_exts = (
+        ".md",
+        ".markdown",
+        ".txt",
+        ".csv",
+        ".tsv",
+        ".log",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".conf",
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cs",
+        ".rb",
+        ".php",
+        ".sh",
+        ".bat",
+        ".ps1",
+        ".sql",
+        ".html",
+        ".css",
+        ".xml",
+        ".env",
+    )
     if mime.startswith("text/"):
         return True
-    if mime in ("application/json", "application/x-yaml", "application/toml",
-                "application/javascript", "application/xml"):
+    if mime in (
+        "application/json",
+        "application/x-yaml",
+        "application/toml",
+        "application/javascript",
+        "application/xml",
+    ):
         return True
     return filename.lower().endswith(text_exts)

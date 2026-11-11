@@ -1,4 +1,5 @@
 """应用入口：路由装配、安全响应头、SPA 静态托管、启动初始化。"""
+
 from __future__ import annotations
 
 import contextlib
@@ -14,8 +15,13 @@ from .config import settings
 from .routers import admin, auth, chat, dify, documents, search, secrets
 from .routers import audit as audit_router
 
-app = FastAPI(title="私有知识库与密钥管理系统", version="1.1.0",
-              docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(
+    title="私有知识库与密钥管理系统",
+    version="1.1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 app.include_router(auth.router)
 app.include_router(admin.router)
@@ -35,7 +41,9 @@ async def security_headers(request, call_next):
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Cache-Control"] = "no-store"
     if settings.enable_hsts:
-        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        resp.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
     return resp
 
 
@@ -53,8 +61,10 @@ async def healthz():
         ok_redis = True
     except Exception as e:
         print(f"[healthz] redis 不可用: {type(e).__name__}", flush=True)
-    return JSONResponse({"ok": ok_db and ok_redis, "db": ok_db, "redis": ok_redis},
-                        status_code=200 if (ok_db and ok_redis) else 503)
+    return JSONResponse(
+        {"ok": ok_db and ok_redis, "db": ok_db, "redis": ok_redis},
+        status_code=200 if (ok_db and ok_redis) else 503,
+    )
 
 
 @app.on_event("startup")
@@ -81,8 +91,21 @@ if _DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa(full_path: str):
-        if full_path.startswith(("api/", "auth/", "admin/", "documents/", "search/", "chat/",
-                                 "secrets/", "audit/", "dify/", "notifications/", "healthz")):
+        if full_path.startswith(
+            (
+                "api/",
+                "auth/",
+                "admin/",
+                "documents/",
+                "search/",
+                "chat/",
+                "secrets/",
+                "audit/",
+                "dify/",
+                "notifications/",
+                "healthz",
+            )
+        ):
             return JSONResponse({"error": "not found"}, status_code=404)
         candidate = _DIST / full_path
         if full_path and candidate.is_file() and str(candidate).startswith(str(_DIST)):

@@ -2,6 +2,7 @@
 
 若存在 frontend/tests/vectors.json（由前端 vitest 生成），则额外做 TS↔PY 互操作验证。
 """
+
 import base64
 import json
 from pathlib import Path
@@ -11,7 +12,12 @@ from cryptography.exceptions import InvalidTag
 
 from app import mirror_crypto as mc
 
-VECTORS_FILE = Path(__file__).resolve().parent.parent.parent / "frontend" / "tests" / "vectors.json"
+VECTORS_FILE = (
+    Path(__file__).resolve().parent.parent.parent
+    / "frontend"
+    / "tests"
+    / "vectors.json"
+)
 
 
 def test_kdf_deterministic():
@@ -20,7 +26,9 @@ def test_kdf_deterministic():
     assert k1 == k2 and len(k1) == 32
     assert mc.derive_enc_key("错误的主密码", b"0123456789abcdef") != k1
     # auth / enc 域分离
-    assert mc.derive_auth_key("同一个密码", b"s" * 16) != mc.derive_enc_key("同一个密码", b"s" * 16)
+    assert mc.derive_auth_key("同一个密码", b"s" * 16) != mc.derive_enc_key(
+        "同一个密码", b"s" * 16
+    )
 
 
 def test_auth_proof_chain():
@@ -53,8 +61,13 @@ def test_aead_roundtrip_and_tamper():
 
 def test_ecies_roundtrip():
     priv, pub = mc.x25519_keygen()
-    blob = mc.ecies_seal(pub, b"DEK-32-bytes-xxxxxxxxxxxxxxxx", mc.AAD_ORG_DELEGATE + "uid1")
-    assert mc.ecies_open(priv, blob, mc.AAD_ORG_DELEGATE + "uid1") == b"DEK-32-bytes-xxxxxxxxxxxxxxxx"
+    blob = mc.ecies_seal(
+        pub, b"DEK-32-bytes-xxxxxxxxxxxxxxxx", mc.AAD_ORG_DELEGATE + "uid1"
+    )
+    assert (
+        mc.ecies_open(priv, blob, mc.AAD_ORG_DELEGATE + "uid1")
+        == b"DEK-32-bytes-xxxxxxxxxxxxxxxx"
+    )
     # AAD 不匹配失败
     with pytest.raises(InvalidTag):
         mc.ecies_open(priv, blob, mc.AAD_ORG_DELEGATE + "uid2")
@@ -97,15 +110,18 @@ def test_full_zero_knowledge_chain():
     # 离线恢复码路径
     offline_code = "OFFLINE-CODE-0123456789abcdef"
     offline_salt = b"3" * 16
-    wrapped = mc.aead_seal(mc.argon2id(offline_code.encode(), offline_salt),
-                           org_priv, mc.AAD_ORG_OFFLINE)
+    wrapped = mc.aead_seal(
+        mc.argon2id(offline_code.encode(), offline_salt), org_priv, mc.AAD_ORG_OFFLINE
+    )
     org_priv2 = mc.unwrap_org_priv_offline(offline_code, offline_salt, mc.b64e(wrapped))
     assert org_priv2 == org_priv
 
     # 个人恢复码路径：RK 解用户私钥
     rk = "RK-" + "9" * 32
     rk_salt = b"4" * 16
-    rk_wrapped = mc.aead_seal(mc.argon2id(rk.encode(), rk_salt), priv_a, mc.AAD_USER_PRIV_RK)
+    rk_wrapped = mc.aead_seal(
+        mc.argon2id(rk.encode(), rk_salt), priv_a, mc.AAD_USER_PRIV_RK
+    )
     assert mc.unwrap_user_priv_with_rk(rk, rk_salt, mc.b64e(rk_wrapped)) == priv_a
 
 
@@ -114,23 +130,36 @@ def test_b64_roundtrip():
     assert mc.b64d(mc.b64e(raw)) == raw
 
 
-@pytest.mark.skipif(not VECTORS_FILE.exists(), reason="前端互操作向量未生成（frontend npm test 生成）")
+@pytest.mark.skipif(
+    not VECTORS_FILE.exists(), reason="前端互操作向量未生成（frontend npm test 生成）"
+)
 def test_typescript_interop():
     """TS 侧生成的向量：Python 必须能解开（证明两端实现一致）。"""
     vectors = json.loads(VECTORS_FILE.read_text(encoding="utf-8"))
     # KDF 一致性
-    assert mc.hkdf_sha256(
-        mc.argon2id(vectors["mp"].encode(),
-                    base64.b64decode(vectors["salt_auth_b64"])),
-        b"kb:auth", b"auth") is not None
-    proof = mc.derive_auth_proof_key(vectors["mp"], base64.b64decode(vectors["salt_auth_b64"]))
+    assert (
+        mc.hkdf_sha256(
+            mc.argon2id(
+                vectors["mp"].encode(), base64.b64decode(vectors["salt_auth_b64"])
+            ),
+            b"kb:auth",
+            b"auth",
+        )
+        is not None
+    )
+    proof = mc.derive_auth_proof_key(
+        vectors["mp"], base64.b64decode(vectors["salt_auth_b64"])
+    )
     assert proof.hex() == vectors["auth_proof_key_hex"]
     enc = mc.derive_enc_key(vectors["mp"], base64.b64decode(vectors["salt_enc_b64"]))
-    plain = mc.aead_open(enc, base64.b64decode(vectors["local_check_ct_b64"]), mc.AAD_LOCAL_CHECK)
+    plain = mc.aead_open(
+        enc, base64.b64decode(vectors["local_check_ct_b64"]), mc.AAD_LOCAL_CHECK
+    )
     assert plain == b"vault-check-v1"
     # ECIES：TS 密封 → PY 解开（收件人私钥由 TS 侧固定在向量里）
     opened = mc.ecies_open(
         base64.b64decode(vectors["recipient_priv_b64"]),
         base64.b64decode(vectors["ecies_ct_b64"]),
-        vectors["ecies_aad"])
+        vectors["ecies_aad"],
+    )
     assert opened == vectors["ecies_plain"].encode()

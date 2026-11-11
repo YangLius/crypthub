@@ -1,4 +1,5 @@
 """Dify 外部知识库回调（设计第 9 节，第二阶段接入）：服务间密钥鉴权，只返回已脱敏片段。"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -16,8 +17,9 @@ class RetrievalBody(BaseModel):
 
 
 @router.post("/retrieval")
-async def retrieval_callback(body: RetrievalBody, request: Request,
-                             x_service_key: str = Header(default="")):
+async def retrieval_callback(
+    body: RetrievalBody, request: Request, x_service_key: str = Header(default="")
+):
     if not settings.dify_service_key:
         raise HTTPException(503, "Dify 回调未启用（未配置 DIFY_SERVICE_KEY）")
     if not security.const_eq(x_service_key, settings.dify_service_key):
@@ -30,8 +32,11 @@ async def retrieval_callback(body: RetrievalBody, request: Request,
                 "content": r["text"],
                 "score": round(min(0.99, float(r.get("rrf", 0)) * 10), 4),
                 "title": r["title"],
-                "metadata": {"document_id": r["document_id"], "anchor": r["anchor"],
-                             "chunk_idx": r["idx"]},
+                "metadata": {
+                    "document_id": r["document_id"],
+                    "anchor": r["anchor"],
+                    "chunk_idx": r["idx"],
+                },
             }
             for r in rows
         ]

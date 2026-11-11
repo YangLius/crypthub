@@ -1,8 +1,21 @@
-"""应用配置：全部来自环境变量（部署时注入，不进代码/数据库）。"""
+"""应用配置：全部来自环境变量（部署时注入，不进代码/数据库）。
+
+本地开发支持 .env：仓库根目录与 backend/ 下的 .env 都会被加载，
+已有环境变量优先（override=False），便于容器注入覆盖。
+"""
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# .env：仓库根 + backend/（均不覆盖已注入的环境变量）
+for _p in (Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[1] / ".env"):
+    if _p.is_file():
+        load_dotenv(_p, override=False)
 
 
 def _bool(v: str | None, default: bool = False) -> bool:
@@ -78,7 +91,9 @@ class Settings:
 
     def require_llm(self) -> tuple[str, str, str]:
         if not (self.llm_api_base and self.llm_api_key and self.llm_model):
-            raise RuntimeError("LLM 未配置：请设置 LLM_API_BASE / LLM_API_KEY / LLM_MODEL")
+            raise RuntimeError(
+                "LLM 未配置：请设置 LLM_API_BASE / LLM_API_KEY / LLM_MODEL"
+            )
         return self.llm_api_base.rstrip("/"), self.llm_api_key, self.llm_model
 
 

@@ -11,7 +11,8 @@ backend/    FastAPI API + 索引 worker（Python）
 frontend/   React + TS + Vite（全部浏览器端加密）
 docs/       DDL / 加密流程 / 任务拆解 / 部署运维 / 内部规范 / 上线清单
 scripts → backend/scripts   备份 / 恢复 / 离线解密
-backend/docker-compose.yml  api + worker + postgres(pgvector) + redis
+backend/docker-compose.yml  api + worker + postgres + redis
+                            （向量检索为 real[] + Python 余弦，无需 pgvector 扩展）
 ```
 
 ## 快速开始（服务器）

@@ -4,6 +4,7 @@
 - local：模型只载入 worker 进程（768MB 预算）；api 通过 Redis 请求-应答通道
   委托 worker 计算（避免 api 进程加载 torch，内存友好）。
 """
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,7 @@ def _vec_text(v: list[float]) -> str:
 
 
 # ---------- openai_compat ----------
+
 
 async def _embed_via_api(texts: list[str]) -> list[list[float]]:
     base = settings.embedding_api_base.rstrip("/")
@@ -48,9 +50,14 @@ def embed_local(texts: list[str]) -> list[list[float]]:
     global _local_model
     if _local_model is None:
         from sentence_transformers import SentenceTransformer
+
         _local_model = SentenceTransformer(settings.embedding_model, device="cpu")
-    vecs = _local_model.encode(texts, batch_size=settings.embedding_batch,
-                               normalize_embeddings=True, show_progress_bar=False)
+    vecs = _local_model.encode(
+        texts,
+        batch_size=settings.embedding_batch,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
     return [list(map(float, v)) for v in vecs]
 
 
@@ -76,20 +83,12 @@ async def _embed_via_worker(texts: list[str]) -> list[list[float]]:
 
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """api / worker 通用入口（异步）。"""
+    """api / worker 通用入口（异步；worker 在自己事件循环内 await 调用）。"""
     if not texts:
         return []
     if settings.embedding_provider == "openai_compat":
         out: list[list[float]] = []
         for i in range(0, len(texts), settings.embedding_batch):
-            out.extend(await _embed_via_api(texts[i:i + settings.embedding_batch]))
+            out.extend(await _embed_via_api(texts[i : i + settings.embedding_batch]))
         return out
     return await _embed_via_worker(texts)
-
-
-def embed_texts_sync(texts: list[str]) -> list[list[float]]:
-    """worker 内同步入口（本地模型直算）。"""
-    if settings.embedding_provider == "openai_compat":
-        import asyncio
-        return asyncio.run(embed_texts(texts))
-    return embed_local(texts)

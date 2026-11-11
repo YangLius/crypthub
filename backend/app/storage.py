@@ -1,4 +1,5 @@
 """文件存储：原始文档保存在 DATA_DIR/files 下，文件名 = 文档 id + 消毒后的扩展名。"""
+
 from __future__ import annotations
 
 import re
@@ -19,6 +20,7 @@ def doc_file_rel_path(filename: str) -> str:
 def abs_path(rel: str, data_dir: str) -> str:
     """拼绝对路径并防目录穿越（rel 必须是内部生成的形态）。"""
     import os
+
     base = os.path.abspath(data_dir)
     full = os.path.abspath(os.path.join(base, rel))
     if not full.startswith(base + os.sep):

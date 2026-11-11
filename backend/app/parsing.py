@@ -1,4 +1,5 @@
 """解析器（设计 5.1）：md/txt/csv/代码原生读；pdf=PyMuPDF；docx=python-docx。"""
+
 from __future__ import annotations
 
 import io
@@ -77,10 +78,13 @@ def extract(data: bytes, filename: str, mime: str) -> str:
     if name.endswith(".pdf") or mime == "application/pdf":
         return parse_pdf(data)
     if name.endswith(".docx") or mime in (
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",):
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ):
         return parse_docx(data)
     if name.endswith(".doc") or mime == "application/msword":
         raise ParseError("暂不支持旧版 .doc，请另存为 .docx")
-    if name.endswith((".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff")) or mime.startswith("image/"):
+    if name.endswith(
+        (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff")
+    ) or mime.startswith("image/"):
         return parse_ocr(data)
     return parse_text(data)
