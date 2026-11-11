@@ -23,7 +23,10 @@ export interface ParseResult {
 type StringField = "username" | "password" | "url" | "tokens" | "notes";
 type AliasKey = StringField | "name" | "project" | "env";
 
-const FIELD_ALIASES: Record<StringField | "name" | "project" | "env", string[]> = {
+const FIELD_ALIASES: Record<
+  StringField | "name" | "project" | "env",
+  string[]
+> = {
   name: ["name", "名称", "名字", "标题", "条目", "title", "item"],
   username: [
     "username",
@@ -55,16 +58,25 @@ const FIELD_ALIASES: Record<StringField | "name" | "project" | "env", string[]> 
 };
 
 function normalizeKey(k: string): string {
-  return k.trim().toLowerCase().replace(/[\s_-]+/g, "_");
+  return k
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "_");
 }
 
 /** 行（键值对集合）→ SecretContent + name/project/env 元信息 */
 function rowToEntry(
   row: Record<string, string>,
   fallbackName: string,
-): { name: string; project: string; env: string; content: SecretContent } | null {
+): {
+  name: string;
+  project: string;
+  env: string;
+  content: SecretContent;
+} | null {
   const norm: Record<string, string> = {};
-  for (const [k, v] of Object.entries(row)) norm[normalizeKey(k)] = String(v ?? "").trim();
+  for (const [k, v] of Object.entries(row))
+    norm[normalizeKey(k)] = String(v ?? "").trim();
 
   const pick = (field: AliasKey): string => {
     const aliases = FIELD_ALIASES[field].map(normalizeKey);
@@ -90,7 +102,11 @@ function rowToEntry(
   const env = pick("env");
 
   const hasValue =
-    content.username || content.password || content.url || content.tokens || content.notes;
+    content.username ||
+    content.password ||
+    content.url ||
+    content.tokens ||
+    content.notes;
   if (!hasValue && !name) return null;
   if (!content.notes) delete content.notes;
   return {
@@ -114,7 +130,10 @@ function uniqueNames(entries: ParsedEntry[]): ParsedEntry[] {
 /* ---------------- CSV ---------------- */
 
 /** 手写 CSV 解析（支持引号包裹、引号转义、跨行单元格） */
-export function parseCsv(text: string): { rows: Record<string, string>[]; skipped: number } {
+export function parseCsv(text: string): {
+  rows: Record<string, string>[];
+  skipped: number;
+} {
   const rows: string[][] = [];
   let cur: string[] = [];
   let cell = "";
@@ -144,7 +163,8 @@ export function parseCsv(text: string): { rows: Record<string, string>[]; skippe
   cur.push(cell);
   if (cur.some((x) => x.trim() !== "")) rows.push(cur);
 
-  if (rows.length < 2) return { rows: [], skipped: Math.max(0, rows.length - 1) };
+  if (rows.length < 2)
+    return { rows: [], skipped: Math.max(0, rows.length - 1) };
   const header = rows[0];
   const entries: Record<string, string>[] = [];
   for (const r of rows.slice(1)) {
@@ -212,7 +232,12 @@ export function parseJsonLike(text: string): ParseResult {
     const entries: ParsedEntry[] = [];
     let skipped = 0;
     for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      const s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+      const s =
+        v === null || v === undefined
+          ? ""
+          : typeof v === "object"
+            ? JSON.stringify(v)
+            : String(v);
       if (!s.trim()) {
         skipped++;
         continue;
@@ -255,7 +280,12 @@ export function parseEnvText(text: string): ParseResult {
   if (blocks.length > 1) {
     // 分块模式：一个空行分隔的块 = 一个条目
     for (const block of blocks) {
-      const content: SecretContent = { username: "", password: "", url: "", tokens: "" };
+      const content: SecretContent = {
+        username: "",
+        password: "",
+        url: "",
+        tokens: "",
+      };
       const extra: string[] = [];
       let name = "";
       for (const l of block) {
@@ -264,7 +294,11 @@ export function parseEnvText(text: string): ParseResult {
         if (m) {
           const key = m[1].trim();
           const [field, val] = kvFieldFor(key, m[2].trim());
-          if (normalizeKey(key) === "name" || key.includes("名称") || key.includes("标题")) {
+          if (
+            normalizeKey(key) === "name" ||
+            key.includes("名称") ||
+            key.includes("标题")
+          ) {
             name = val;
             continue;
           }
@@ -281,7 +315,13 @@ export function parseEnvText(text: string): ParseResult {
           ? `${content.notes}\n${extra.join("\n")}`
           : extra.join("\n");
       }
-      if (!content.username && !content.password && !content.url && !content.tokens && !content.notes) {
+      if (
+        !content.username &&
+        !content.password &&
+        !content.url &&
+        !content.tokens &&
+        !content.notes
+      ) {
         skipped++;
         continue;
       }
@@ -303,7 +343,11 @@ export function parseEnvText(text: string): ParseResult {
     return { format: "KEY=VALUE 逐行", entries: uniqueNames(entries), skipped };
   }
 
-  return { format: "文本（无法识别结构）", entries: [], skipped: kvLines.length };
+  return {
+    format: "文本（无法识别结构）",
+    entries: [],
+    skipped: kvLines.length,
+  };
 }
 
 /* ---------------- 入口 ---------------- */
@@ -316,9 +360,7 @@ export function supportedImportName(name: string): boolean {
   return /\.(env|txt|csv|tsv|json|md|conf|ini|properties|xlsx)$/i.test(name);
 }
 
-export async function parseImportFile(
-  file: File,
-): Promise<ParseResult> {
+export async function parseImportFile(file: File): Promise<ParseResult> {
   if (file.size > IMPORT_MAX_FILE_BYTES) {
     throw new Error("文件超过 2MB，请拆分后导入");
   }
@@ -342,7 +384,8 @@ export async function parseImportFile(
   if (lower.endsWith(".json")) return parseJsonLike(text);
   if (lower.endsWith(".csv") || lower.endsWith(".tsv")) {
     const { rows, skipped } = parseCsv(text);
-    if (!rows.length) return { format: "CSV（无数据行）", entries: [], skipped };
+    if (!rows.length)
+      return { format: "CSV（无数据行）", entries: [], skipped };
     return rowsToEntries(rows, "CSV 表格");
   }
   // .env/.txt/.md/.conf/.ini/.properties
@@ -354,7 +397,8 @@ export function clampEntries(result: ParseResult): {
   result: ParseResult;
   clamped: number;
 } {
-  if (result.entries.length <= IMPORT_MAX_ENTRIES) return { result, clamped: 0 };
+  if (result.entries.length <= IMPORT_MAX_ENTRIES)
+    return { result, clamped: 0 };
   return {
     result: { ...result, entries: result.entries.slice(0, IMPORT_MAX_ENTRIES) },
     clamped: result.entries.length - IMPORT_MAX_ENTRIES,

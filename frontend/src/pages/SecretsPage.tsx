@@ -411,7 +411,10 @@ function SecretList(props: {
         <Button kind="primary" onClick={() => setCreating(null)}>
           ＋ 新建条目
         </Button>
-        <Button title="从 .env/.txt/.csv/.json/.xlsx 文件批量解析导入" onClick={() => setImporting(true)}>
+        <Button
+          title="从 .env/.txt/.csv/.json/.xlsx 文件批量解析导入"
+          onClick={() => setImporting(true)}
+        >
           从文件导入
         </Button>
       </div>
@@ -622,7 +625,9 @@ function ImportModal({
       setParsed(result);
       setChecked(new Set(result.entries.map((_, i) => i)));
       if (clamped > 0)
-        toastErr(`条目超过 ${IMPORT_MAX_ENTRIES} 上限，仅导入前 ${IMPORT_MAX_ENTRIES} 条`);
+        toastErr(
+          `条目超过 ${IMPORT_MAX_ENTRIES} 上限，仅导入前 ${IMPORT_MAX_ENTRIES} 条`,
+        );
     } catch (e) {
       setFileErr(e instanceof Error ? e.message : "解析失败");
       setParsed(null);
@@ -655,7 +660,9 @@ function ImportModal({
           tags: [],
           content: e.content,
           folderId:
-            defaultFolder && defaultFolder !== "root" ? defaultFolder : undefined,
+            defaultFolder && defaultFolder !== "root"
+              ? defaultFolder
+              : undefined,
         });
       } catch {
         failed++;
@@ -688,10 +695,7 @@ function ImportModal({
   const allChecked = parsed !== null && checked.size === parsed.entries.length;
 
   return (
-    <Modal
-      title="从文件导入密钥"
-      onClose={busy ? () => {} : onClose}
-    >
+    <Modal title="从文件导入密钥" onClose={busy ? () => {} : onClose}>
       <div className="secret-hint">
         解析在本机浏览器完成，<b>文件不会上传</b>；每条条目加密后逐条创建。
         名称/项目/环境为明文元数据，勾选确认后才会写入。

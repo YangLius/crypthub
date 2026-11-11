@@ -30,7 +30,9 @@ describe("parseEnvText", () => {
   });
 
   it("无空行且全为 KEY=VALUE：逐行一条，key 含密码语义进 password", () => {
-    const r = parseEnvText("DB_PASSWORD=abc123\nAPI_TOKEN=tok-1\nAPP_NAME=demo");
+    const r = parseEnvText(
+      "DB_PASSWORD=abc123\nAPI_TOKEN=tok-1\nAPP_NAME=demo",
+    );
     expect(r.format).toBe("KEY=VALUE 逐行");
     expect(r.entries).toHaveLength(3);
     expect(r.entries[0].name).toBe("DB_PASSWORD");
@@ -92,7 +94,11 @@ describe("parseCsv", () => {
 describe("parseJsonLike", () => {
   it("对象：每个 key 一条，密码语义 key 进 password 字段", () => {
     const r = parseJsonLike(
-      JSON.stringify({ REDIS_PASSWORD: "r1", GITHUB_TOKEN: "gh1", README: "说明文本" }),
+      JSON.stringify({
+        REDIS_PASSWORD: "r1",
+        GITHUB_TOKEN: "gh1",
+        README: "说明文本",
+      }),
     );
     expect(r.entries).toHaveLength(3);
     expect(r.entries[0].name).toBe("REDIS_PASSWORD");
@@ -128,10 +134,13 @@ describe("xlsx 往返", () => {
       ["条目乙", "u乙", "p乙"],
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const buf = XLSX.write({ SheetNames: ["s"], Sheets: { s: ws } }, {
-      type: "array",
-      bookType: "xlsx",
-    }) as ArrayBuffer;
+    const buf = XLSX.write(
+      { SheetNames: ["s"], Sheets: { s: ws } },
+      {
+        type: "array",
+        bookType: "xlsx",
+      },
+    ) as ArrayBuffer;
     const wb = XLSX.read(buf, { type: "array" });
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(
       wb.Sheets[wb.SheetNames[0]],
