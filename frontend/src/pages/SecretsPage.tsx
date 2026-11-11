@@ -300,7 +300,10 @@ function SecretList(props: {
     paths,
     onPickFolder,
   } = props;
-  const [creating, setCreating] = useState<PendingRow | null>(null);
+  // null=关闭 / {row:null}=新建 / {row}=认领该行 —— 避免用裸 null 表达两种含义
+  const [creating, setCreating] = useState<{ row: PendingRow | null } | null>(
+    null,
+  );
   const [recovering, setRecovering] = useState<{
     docId: string;
     title: string;
@@ -453,7 +456,7 @@ function SecretList(props: {
         </select>
         <Button onClick={() => void refresh()}>刷新</Button>
         <span style={{ flex: 1 }} />
-        <Button kind="primary" onClick={() => setCreating(null)}>
+        <Button kind="primary" onClick={() => setCreating({ row: null })}>
           ＋ 新建条目
         </Button>
         <Button
@@ -522,7 +525,7 @@ function SecretList(props: {
                   <td>
                     <Button
                       title="创建条目后把占位符归属到它"
-                      onClick={() => setCreating(p)}
+                      onClick={() => setCreating({ row: p })}
                     >
                       新建并认领
                     </Button>
@@ -546,7 +549,7 @@ function SecretList(props: {
       {creating !== null && (
         <CreateModal
           myUserId={me.user_id}
-          pendingRow={creating}
+          pendingRow={creating.row}
           onClose={() => setCreating(null)}
           onDone={(sid) => {
             setCreating(null);
@@ -557,12 +560,13 @@ function SecretList(props: {
                 .catch(() => {});
             }
             void refresh();
+            const claimed = creating.row;
             // 只认领“正在认领”的那条 pending（此前误认领 pending[0]，会张冠李戴）
-            if (sid && creating) {
-              void api.post(`/secrets/pending/${creating.id}/claim`, {
+            if (sid && claimed) {
+              void api.post(`/secrets/pending/${claimed.id}/claim`, {
                 secret_id: sid,
               });
-              onPendingChange(pending.filter((x) => x.id !== creating.id));
+              onPendingChange(pending.filter((x) => x.id !== claimed.id));
             }
           }}
         />
