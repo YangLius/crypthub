@@ -1,9 +1,10 @@
-"""GitHub 热点路由：查看每日 trending（分类 Top10）与一键归档到文档区。
+"""GitHub 热点路由：查看每日 trending（两级分类全量）与归档到文档区。
 
-归档规则（设计需求 2026-11-12）：
-- 文档区全局 doc 树下确保存在「GitHub」目录，其下确保存在对应分类子目录（不存在则创建）。
-- 每个分类生成一篇 Markdown 日报（Top10 关键信息），同日同分类已存在则原地更新并重建索引。
-- 归档走正常文档管线（worker 分块 + 嵌入），归档后即可被检索 / AI 问答引用。
+归档规则（2026-11-12 v2）：
+- 请求体 {full_names: ["owner/repo", ...]}：单项目=1 个元素，批量=多个（即页面勾选）。
+- 每个项目按其当日分类落盘：文档区 GitHub/<父分类>[/<子分类>]，目录不存在自动创建。
+- 文档标题《GitHub 项目 · owner/repo · 日期》，同日同项目重复归档=原地更新并重建索引。
+- 走正常 worker 分块 + 嵌入管线，归档后即可被检索 / AI 问答引用。
 """
 
 from __future__ import annotations
@@ -32,9 +33,7 @@ async def trending_view(force: bool = False, ctx: Ctx = Depends(current_user)) -
 
 
 class ArchiveBody(BaseModel):
-    category: str | None = Field(
-        default=None, max_length=40, description="分类 key；缺省=全部分类"
-    )
+    full_names: list[str] = Field(min_length=1, max_length=100)
 
 
 async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
@@ -63,33 +62,33 @@ async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
     return row["id"]
 
 
-def _render_markdown(date: str, cat: dict) -> str:
-    lines = [
-        f"# GitHub 每日热点 · {cat['label']} · {date}",
-        "",
-        f"> 每日 Top{len(cat['repos'])} · 数据来源 github.com/trending · 生成于 {date}",
-        "",
-    ]
-    for i, r in enumerate(cat["repos"], 1):
-        lines += [
-            f"## {i}. {r['full_name']}",
+def _render_repo_md(repo: dict, cat_label: str, sub_label: str | None, date: str) -> str:
+    sub_part = f" / {sub_label}" if sub_label else ""
+    return "\n".join(
+        [
+            f"# {repo['full_name']}",
             "",
-            f"- 链接：{r['url']}",
-            f"- 语言：{r['language'] or '未知'} ｜ 总星数：{r['stars']:,}"
-            f" ｜ 今日新增：+{r['stars_today']:,} ｜ Fork：{r['forks']:,}",
-            f"- 简介：{r['desc'] or '（无描述）'}",
+            f"> 分类：{cat_label}{sub_part} ｜ 归档日期：{date} ｜ 来源 github.com/trending",
+            "",
+            f"- 链接：{repo['url']}",
+            f"- 语言：{repo['language'] or '未知'} ｜ 总星数：{repo['stars']:,}"
+            f" ｜ 今日新增：+{repo['stars_today']:,} ｜ Fork：{repo['forks']:,}",
+            "",
+            "## 简介",
+            "",
+            repo["desc"] or "（无描述）",
             "",
         ]
-    return "\n".join(lines)
+    )
 
 
 async def _upsert_doc(
     title: str, folder_id: str, md: str, ctx: Ctx
 ) -> tuple[str, bool]:
     """同目录同名文档存在则原地更新内容并重建索引；否则新建。返回 (doc_id, created)。"""
-    raw = md.encode("utf-8")
     import hashlib
 
+    raw = md.encode("utf-8")
     sha = hashlib.sha256(raw).hexdigest()
     old = await db.fetch_one(
         "SELECT id, file_path FROM documents WHERE title=:t AND folder_id=:fid",
@@ -131,7 +130,7 @@ async def _upsert_doc(
             "sz": len(raw),
             "sha": sha,
             "fp": rel,
-            "tags": db.j(["github", "trending", "日报"]),
+            "tags": db.j(["github", "trending", "项目"]),
             "uid": ctx.user["id"],
             "fid": folder_id,
         },
@@ -149,39 +148,61 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
     except Exception as e:
         raise HTTPException(502, f"抓取 GitHub Trending 失败：{str(e)[:200]}") from None
 
-    cats = data["categories"]
-    if body.category is not None:
-        cats = [c for c in cats if c["key"] == body.category]
-        if not cats:
-            raise HTTPException(404, "该分类今日没有上榜项目")
-
+    index = {
+        r["full_name"]: (cat, r)
+        for cat in data["categories"]
+        for r in cat["repos"]
+    }
+    names = [n.strip().strip("/") for n in body.full_names if n.strip()]
     gh_id = await _ensure_doc_folder("GitHub", None)
-    results = []
-    for c in cats:
-        cat_id = await _ensure_doc_folder(c["label"], gh_id)
-        md = _render_markdown(data["date"], c)
-        title = f"GitHub 每日热点 · {c['label']} · {data['date']}"
-        doc_id, created = await _upsert_doc(title, cat_id, md, ctx)
+
+    results: list[dict] = []
+    not_found: list[str] = []
+    for fn in names:
+        hit = index.get(fn)
+        if hit is None:
+            not_found.append(fn)
+            continue
+        cat, repo = hit
+        folder_id, path_parts = gh_id, ["GitHub", cat["label"]]
+        folder_id = await _ensure_doc_folder(cat["label"], gh_id)
+        if repo.get("sub") and repo.get("sub_label"):
+            folder_id = await _ensure_doc_folder(repo["sub_label"], folder_id)
+            path_parts.append(repo["sub_label"])
+        title = f"GitHub 项目 · {fn} · {data['date']}"
+        md = _render_repo_md(repo, cat["label"], repo.get("sub_label"), data["date"])
+        doc_id, created = await _upsert_doc(title, folder_id, md, ctx)
         results.append(
             {
-                "category": c["key"],
-                "label": c["label"],
+                "full_name": fn,
                 "doc_id": doc_id,
                 "created": created,
-                "repos": len(c["repos"]),
+                "path": "/".join(path_parts),
+                "category": cat["label"],
+                "sub": repo.get("sub_label"),
+                "stars": repo["stars"],
+                "stars_today": repo["stars_today"],
             }
         )
-        # 小睡一下：避免批量归档时同时塞多个嵌入任务打爆 API 限速
+        # 小睡一下：批量归档时避免同时塞太多嵌入任务打爆 API 限速
         await asyncio.sleep(0.2)
+
+    if not results:
+        raise HTTPException(404, "所选项目均不在今日热榜中（请刷新后重试）")
 
     await audit.audit(
         "gh_archive_created",
         user=ctx.user,
         ip=ctx.ip,
-        detail={"date": data["date"], "docs": [r["label"] for r in results]},
+        detail={
+            "date": data["date"],
+            "repos": [r["full_name"] for r in results],
+            "not_found": not_found,
+        },
     )
     return {
         "date": data["date"],
         "results": results,
-        "note": "已写入 文档区/GitHub/<分类>，索引就绪后即可搜索",
+        "not_found": not_found,
+        "note": "已写入 文档区/GitHub/<分类>[/<子分类>]，索引就绪后即可搜索",
     }
