@@ -332,9 +332,7 @@ function SecretList(props: {
   const [creating, setCreating] = useState<{
     row: PendingRow | null;
     pairSlug?: string;
-  } | null>(
-    null,
-  );
+  } | null>(null);
   const [recovering, setRecovering] = useState<{
     docId: string;
     title: string;
@@ -1110,7 +1108,15 @@ function CreateModal({
   // 合并认领候选：本文档先前已认领的条目（本机解密比对）。认领用户名+密码时，
   // 若密码/用户名与旧条目一致，应补齐字段更新旧条目，而不是再新建一条
   const [mergeCandidates, setMergeCandidates] = useState<
-    { sid: string; name: string; content: SecretContent; contentCt: string }[]
+    {
+      sid: string;
+      name: string;
+      project?: string | null;
+      env?: string | null;
+      tags?: string[] | null;
+      content: SecretContent;
+      contentCt: string;
+    }[]
   >([]);
   const [mergeSel, setMergeSel] = useState(""); // ""=新建条目，否则=合并目标 sid
   const [tplId, setTplId] = useState<TemplateId>("login");
@@ -1137,7 +1143,17 @@ function CreateModal({
     const url = paired?.url ?? hit.url;
     if (url) merged.url = url;
     setContent((c) => ({ ...c, ...merged }));
-    setTplId(guessTemplate({ ...EMPTY_CONTENT, ...merged }));
+    // 配对已知（本机缓存或外层服务端兑底）时，即使只拿到一侧的值也归为
+    // 用户名密码类，避免孤密码/孤用户名被误判成 API 密钥或其他
+    const knownPair = Boolean(paired ?? pairSlug);
+    const t0 = guessTemplate({ ...EMPTY_CONTENT, ...merged });
+    setTplId(
+      knownPair && !merged.tokens && (merged.username || merged.password)
+        ? merged.url
+          ? "web"
+          : "login"
+        : t0,
+    );
     if (!url && pendingRow.source_doc_id) {
       let alive = true;
       api
@@ -1153,14 +1169,18 @@ function CreateModal({
           const u = hints.get(pendingRow.slug) ?? hints.get(slugs[1] ?? "");
           if (!u) return;
           setContent((c) => ({ ...c, url: u }));
-          setTplId(guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }));
+          setTplId(
+            knownPair && !merged.tokens
+              ? "web"
+              : guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }),
+          );
         })
         .catch(() => {}); // 非客户端脱敏文档或临时失败：保持当前类型
       return () => {
         alive = false;
       };
     }
-  }, [pendingRow]);
+  }, [pendingRow, pairSlug]);
 
   // 解析源文档目录链并镜像到密钥区；失败不阻塞（mirror 保持 null → 不归档）
   useEffect(() => {
@@ -1195,11 +1215,17 @@ function CreateModal({
             status: string;
             secret_id: string | null;
             secret_name?: string | null;
+            secret_project?: string | null;
+            secret_env?: string | null;
+            secret_tags?: string[] | null;
           }[];
         }>(`/documents/${docId}/placeholders`);
         const out: {
           sid: string;
           name: string;
+          project?: string | null;
+          env?: string | null;
+          tags?: string[] | null;
           content: SecretContent;
           contentCt: string;
         }[] = [];
@@ -1223,6 +1249,9 @@ function CreateModal({
                 p.secret_name ||
                 c.notes?.slice(0, 20) ||
                 p.secret_id.slice(0, 6),
+              project: p.secret_project,
+              env: p.secret_env,
+              tags: p.secret_tags,
               content: c,
               contentCt: rr.content_ct,
             });
@@ -1265,6 +1294,43 @@ function CreateModal({
     setMergeSel(best || mergeCandidates[0].sid);
   }, [mergeCandidates, cachedHit, cachedPair]);
 
+  // 合并目标变化：回填旧条目的元数据（名称/项目/环境/标签/备注）供确认或微调；
+  // 切回「新建条目」时恢复认领预填值
+  const prefillSnapRef = useRef<{
+    name: string;
+    project: string;
+    env: string;
+    tags: string;
+    notes: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!pendingRow) return;
+    const c = mergeCandidates.find((x) => x.sid === mergeSel);
+    if (c) {
+      prefillSnapRef.current ??= {
+        name,
+        project,
+        env,
+        tags,
+        notes: content.notes ?? "",
+      };
+      setName(c.name);
+      setProject(c.project ?? "");
+      setEnv(c.env ?? "");
+      setTags((c.tags ?? []).join(", "));
+      setContent((s) => ({ ...s, notes: c.content.notes ?? "" }));
+    } else if (!mergeSel && prefillSnapRef.current) {
+      const s = prefillSnapRef.current;
+      prefillSnapRef.current = null;
+      setName(s.name);
+      setProject(s.project);
+      setEnv(s.env);
+      setTags(s.tags);
+      setContent((cur) => ({ ...cur, notes: s.notes }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在合并目标/候选变化时回填
+  }, [mergeSel, mergeCandidates]);
+
   const [busy, setBusy] = useState(false);
   const [orgPub, setOrgPub] = useState("");
 
@@ -1290,6 +1356,17 @@ function CreateModal({
       if (pendingRow && mergeSel) {
         const c = mergeCandidates.find((x) => x.sid === mergeSel);
         if (!c) throw new Error("合并目标不存在，请重选");
+        // 元数据按表单当前值一并更新（表单已回填旧条目值，可直接确认或微调）
+        const mtags = tags
+          .split(/[,，]/)
+          .map((x) => x.trim())
+          .filter(Boolean);
+        await api.patch(`/secrets/${mergeSel}`, {
+          name: name || null,
+          project: project || null,
+          env: env || null,
+          tags: mtags,
+        });
         const merged: SecretContent = { ...c.content };
         for (const k of ["username", "password", "url", "tokens"] as const) {
           const v = content[k];
@@ -1403,7 +1480,10 @@ function CreateModal({
       )}
       {pendingRow && mergeCandidates.length > 0 && (
         <Field label="合并选项">
-          <select value={mergeSel} onChange={(e) => setMergeSel(e.target.value)}>
+          <select
+            value={mergeSel}
+            onChange={(e) => setMergeSel(e.target.value)}
+          >
             <option value="">新建条目</option>
             {mergeCandidates.map((c) => (
               <option key={c.sid} value={c.sid}>

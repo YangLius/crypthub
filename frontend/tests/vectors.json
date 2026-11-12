@@ -1,12 +1,12 @@
 {
   "mp": "interop-master-密码-42",
-  "salt_auth_b64": "Udr1NVWviZOvq7xTwXGF+Q==",
-  "salt_enc_b64": "CQ0Em5EwK4qvqA/ccB/CDg==",
-  "auth_proof_key_hex": "8b323067e4973c91d0b0025efbda8662e72474bdad47fc4d7e64df9c8ea890be",
-  "local_check_ct_b64": "vFUEYMB4f/OhNSjh3cd6WNoCDqTw2qVKZM1b9pyn+2HpS/k9XMibgKmT",
-  "recipient_priv_b64": "KeW7xJyWdIVUW4fLLsSB8yzvYfx2zbJPpEAWL/uPuYs=",
-  "recipient_pub_b64": "S/IcR/kr7LsFpB4neI58DG5OBY4NjDe9Hd7uEo+a804=",
+  "salt_auth_b64": "98ebZRaB/1YkfdM9lnlIEA==",
+  "salt_enc_b64": "PvOnqg6jttiFgkCthHxJ6g==",
+  "auth_proof_key_hex": "a13f1776de099abe949a9796e5c0413371a37a834e7390dcee775bcfc7a91c71",
+  "local_check_ct_b64": "0EXR0zYgNy4NfxsMXy+HShkbwe0O7iwn669/EYsyOj2klRDsWT9XYnFK",
+  "recipient_priv_b64": "mhwrQsbKMNEBFB0dYuqsGX1oFGN6QWvF1n4nyx37NsU=",
+  "recipient_pub_b64": "C6wZCMDr2VTKWd1A3tktXG6Ug3gdJLr2vknIKoggCmE=",
   "ecies_aad": "kb:org-delegate:interop-user",
   "ecies_plain": "interop-plaintext-跨语言验证",
-  "ecies_ct_b64": "SdvyfBEBliZAowiG8YM2q11ba9nuDqncTaciiF9qwxXYBBQg13re4llmxdD/c7Wkd2kQi+T63ECVLewCf2CW6RYggsLbgRMF8l67vmFh9L8WhXQFxe6S8uUNvudI"
+  "ecies_ct_b64": "CpdFWIRhg9NVUgAVOnGwf/nrKAanmPjBBONTjqIzdw24MnT//ovCU8zQr/AZ8DNjI9BbbwrMe5YrmaeqKd5TCWVVflETiHu41q4mi4cfHlP1oU3griJGiUYKeQJ0"
 }

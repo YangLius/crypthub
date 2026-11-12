@@ -150,11 +150,11 @@ export function suggestFields(hit: {
  if (!value) return {};
  if (
   hit.kind === "prefix" ||
-  hit.kind === "connstr" ||
-  hit.kind === "entropy"
+  hit.kind === "connstr"
  ) {
   return { tokens: value };
  }
+ // 熵命中（IP/哈希/随机串等无格式特征）不再是「API 密钥」，落备注更符合直觉
  // kv：新版命中带 key（键名标签）且 value 只有纯值；
  // 旧缓存（value=整行）走拆键名归类的老路径
  if (hit.key) {
@@ -167,7 +167,7 @@ export function suggestFields(hit: {
   return { notes: `${key}: ${value}` };
  }
  const m = value.match(/^([^=:：]{1,48}?)[=:：]\s*(.+)$/s);
- if (!m) return { tokens: value };
+ if (!m) return { notes: value };
  const key = m[1].trim();
  const val = m[2].trim();
  if (/pass(word|wd)?|pwd|密码/i.test(key)) return { password: val };

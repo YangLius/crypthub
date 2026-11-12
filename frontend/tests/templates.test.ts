@@ -62,10 +62,11 @@ describe("guessTemplate 按已填字段自动归类", () => {
     ).toBe("cert");
   });
 
-  it("token+用户名 → ssh；全空 → other", () => {
+  it("token+用户名 → ssh；孤密码 → login（非 apikey）；全空 → other", () => {
     expect(
       guessTemplate(c({ url: "10.0.0.5:22", username: "root", tokens: "AAA" })),
     ).toBe("ssh");
+    expect(guessTemplate(c({ password: "Xzg2020$" }))).toBe("login");
     expect(guessTemplate(c({}))).toBe("other");
   });
 });

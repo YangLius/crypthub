@@ -122,13 +122,13 @@ describe("suggestFields 字段归类", () => {
     });
   });
 
-  it("未知键 → notes；无法拆键 → tokens；prefix/connstr/entropy → tokens", () => {
+  it("未知键 → notes；无法拆键 → notes；prefix/connstr → tokens；entropy → notes", () => {
     expect(suggestFields({ ...base, value: "region=cn-north" })).toEqual({
       notes: "region: cn-north",
     });
     expect(suggestFields({ ...base, value: "随便一串没有键名的文本" })).toEqual(
       {
-        tokens: "随便一串没有键名的文本",
+        notes: "随便一串没有键名的文本",
       },
     );
     expect(
@@ -139,6 +139,10 @@ describe("suggestFields 字段归类", () => {
     expect(
       suggestFields({ ...base, kind: "connstr", value: "postgres://u:p@h/db" }),
     ).toEqual({ tokens: "postgres://u:p@h/db" });
+    // 熵命中（如服务器 IP）不再是 API 密钥，落备注
+    expect(
+      suggestFields({ ...base, kind: "entropy", value: "47.109.143.246" }),
+    ).toEqual({ notes: "47.109.143.246" });
   });
 });
 

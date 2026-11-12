@@ -158,7 +158,9 @@ export function guessTemplate(c: SecretContent): TemplateId {
   if (url && u && p) return "web";
   if (url && p && !u) return "middleware";
   if (u && p) return "login";
-  if (p) return "apikey";
+  // 孤密码（无用户名）也归用户名密码类，而不是误判成 API 密钥；
+  // 真正的 API 密钥（sk-/ghp_ 等格式）走 tokens 判定
+  if (p) return "login";
   return "other";
 }
 
