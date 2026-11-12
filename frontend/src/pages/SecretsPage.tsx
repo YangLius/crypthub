@@ -1158,9 +1158,7 @@ function CreateModal({
     if (!pendingRow.source_doc_id) return;
     let alive = true;
     api
-      .get<{ text: string }>(
-        `/documents/${pendingRow.source_doc_id}/redacted`,
-      )
+      .get<{ text: string }>(`/documents/${pendingRow.source_doc_id}/redacted`)
       .then((r) => {
         if (!alive) return;
         const partnerSlug = paired?.slug ?? pairSlug;

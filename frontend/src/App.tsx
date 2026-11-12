@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { TopNav, TopNavItem } from "@astryxdesign/core/TopNav";
 import { api } from "./api/client";
-import { useApp, useToasts } from "./store";
+import { useApp, useToasts, toast } from "./store";
 import { Badge, Button } from "./components/ui";
 import { RouterLink } from "./router-link";
 import LoginPage from "./pages/LoginPage";
@@ -126,6 +126,30 @@ export default function App() {
       })
       .catch(() => setMe(null));
   }, [setMe]);
+
+  // 新版本检测：构建时写入 dist/version.txt，启动时比对本地记录；
+  // SPA 旧标签页会一直跑旧 JS（不刷新感知不到已部署新版本），主动提示强刷
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await fetch("/version.txt", { cache: "no-store" });
+        if (!r.ok) return; // 开发模式无此文件
+        const v = (await r.text()).trim();
+        if (!v) return;
+        const prev = localStorage.getItem("kb_build_id");
+        localStorage.setItem("kb_build_id", v);
+        if (alive && prev && prev !== v) {
+          toast("系统已更新：请按 Ctrl+F5 强制刷新加载新版本（旧标签页仍在跑旧代码）");
+        }
+      } catch {
+        // 静默：检测失败不影响使用
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <div className="app">
