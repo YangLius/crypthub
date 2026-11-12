@@ -1041,7 +1041,9 @@ def _taxonomy_payload() -> list[dict]:
     ]
 
 
-async def get_range(range_key: str, force: bool = False, depth: int | None = None) -> dict:
+async def get_range(
+    range_key: str, force: bool = False, depth: int | None = None
+) -> dict:
     """按范围取当日数据。
 
     - daily/weekly/monthly：官方 trending（带增量星数），无渐进概念；
@@ -1114,9 +1116,9 @@ async def get_range(range_key: str, force: bool = False, depth: int | None = Non
                         )
         query = f"stars:{preset['stars']}"
         if preset["created_days"]:
-            since_date = (
-                _now_cst() - timedelta(days=preset["created_days"])
-            ).strftime("%Y-%m-%d")
+            since_date = (_now_cst() - timedelta(days=preset["created_days"])).strftime(
+                "%Y-%m-%d"
+            )
             query = f"created:>{since_date} {query}"
         start_page = 1 if force else fetched + 1
         fresh = await _fetch_search_repos(query, start_page, target)

@@ -16,8 +16,8 @@ const RANGES: Array<{ key: string; label: string; group: string }> = [
   { key: "daily", label: "今日热榜", group: "热榜" },
   { key: "weekly", label: "本周热榜", group: "热榜" },
   { key: "monthly", label: "本月热榜", group: "热榜" },
-  { key: "new", label: "近7天新星", group: "普通" },
-  { key: "all", label: "总星Top1000", group: "普通" },
+  { key: "new", label: "近7天新星", group: "所有" },
+  { key: "all", label: "总星Top1000", group: "所有" },
 ];
 
 interface Repo {
@@ -387,18 +387,19 @@ export default function GitHubPage() {
         </div>
         <div className="secret-hint">
           {data.date} ·{" "}
-          {RANGES.find((x) => x.key === data.range)?.label ?? data.range}：已加载{" "}
-          {data.total} 个
+          {RANGES.find((x) => x.key === data.range)?.label ?? data.range}
+          ：已加载 {data.total} 个
           {data.pages_total
             ? `（GitHub 第 ${data.pages_fetched}/${data.pages_total} 页）`
-            : ""}          · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
-          小时）。热榜（今日/本周/本月）为官方 trending 各 ~10 个；普通池按总星排序、
-          翻到末尾自动逐页实时拉取（近7天新星 / 总星Top1000，Search API
-          单查询硬上限 1000）。点「整理」归档到
+            : ""}{" "}
+          · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
+          小时）。热榜（今日/本周/本月）为官方 trending 各 ~10
+          个；所有池按总星排序、 翻到末尾自动逐页实时拉取（近7天新星 /
+          总星Top1000，Search API 单查询硬上限 1000）。点「整理」归档到
           文档区/GitHub/分类[/子分类]；勾选后可批量整理（同日重复整理=更新）。
         </div>
 
-        {/* 顶层：热榜 / 普通 */}
+        {/* 顶层：热榜 / 所有 */}
         <div className="gh-tabs">
           <button
             className={`gh-tab ${topTab === "hot" ? "gh-tab-on" : ""}`}
@@ -410,14 +411,14 @@ export default function GitHubPage() {
             className={`gh-tab ${topTab === "normal" ? "gh-tab-on" : ""}`}
             onClick={() => pickTop("normal")}
           >
-            📦 普通
+            📦 所有
           </button>
         </div>
 
         {/* 当前组的数据范围 */}
         <div className="gh-tabs">
           {RANGES.filter((x) =>
-            topTab === "hot" ? x.group === "热榜" : x.group === "普通",
+            topTab === "hot" ? x.group === "热榜" : x.group === "所有",
           ).map((x) => (
             <button
               key={x.key}
@@ -449,7 +450,7 @@ export default function GitHubPage() {
           </button>
           <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
             本分类 {sorted.length} 个 · 第 {safePage}/{totalPages} 页
-            {topTab === "normal" ? " · 普通池无每日增量数据" : ""}
+            {topTab === "normal" ? " · 所有池无每日增量数据" : ""}
           </span>
           {data.pages_total && (data.pages_fetched ?? 0) < data.pages_total ? (
             <button
