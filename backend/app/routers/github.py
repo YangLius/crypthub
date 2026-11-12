@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from .. import audit, db, queue, storage, trending
+from .. import audit, db, gates, llm, queue, storage, trending
 from ..config import settings
 from ..security import Ctx, current_user
 
@@ -42,6 +43,27 @@ async def trending_view(
 
 class ArchiveBody(BaseModel):
     full_names: list[str] = Field(min_length=1, max_length=100)
+    # 文档语言：zh=中文整理 / en=英文整理（各自独立成文，标题带语言后缀互不覆盖）
+    lang: str = Field("zh", pattern="^(zh|en)$")
+
+
+async def _fetch_readme(full_name: str) -> str | None:
+    """抓取仓库 README 原文（GitHub API raw 格式）；失败/限速返回 None 走降级。"""
+    headers = {"Accept": "application/vnd.github.raw+json"}
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"https://api.github.com/repos/{full_name}/readme",
+                headers=headers,
+            )
+        if resp.status_code != 200 or not resp.content:
+            return None
+        text = resp.content.decode("utf-8", errors="replace")
+        return text if len(text) > 80 else None  # 过短视为无有效 README
+    except Exception:
+        return None
 
 
 async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
@@ -71,33 +93,73 @@ async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
 
 
 def _render_repo_md(
-    repo: dict, cat_label: str, sub_label: str | None, date: str
+    repo: dict,
+    cat_label: str,
+    sub_label: str | None,
+    date: str,
+    *,
+    summary: str | None = None,
+    readme_text: str | None = None,
+    lang: str = "zh",
 ) -> str:
+    """生成归档 Markdown：元信息 +（LLM 提炼的用途/使用方法）+ 降级原文摘录。"""
+    en = lang == "en"
     sub_part = f" / {sub_label}" if sub_label else ""
     delta = (
-        f"｜ 今日新增：+{repo['stars_today']:,}"
+        f"｜ {'Stars today' if en else '今日新增'}: +{repo['stars_today']:,}"
         if repo.get("stars_today") is not None
-        else "｜ 每日新增：未知（新星池）"
+        else (
+            "｜ Daily stars: unknown (new-repo pool)"
+            if en
+            else "｜ 每日新增：未知（新星池）"
+        )
     )
     created = repo.get("created_at")
-    created_line = f"\n- 建库日期：{created}" if created else ""
-    return "\n".join(
-        [
-            f"# {repo['full_name']}",
-            "",
-            f"> 分类：{cat_label}{sub_part} ｜ 归档日期：{date} ｜ 来源 github.com/trending",
-            "",
-            f"- 链接：{repo['url']}",
-            f"- 语言：{repo['language'] or '未知'} ｜ 总星数：{repo['stars']:,}"
-            f" {delta} ｜ Fork：{repo['forks']:,}",
-            created_line,
-            "",
-            "## 简介",
-            "",
-            repo["desc"] or "（无描述）",
-            "",
-        ]
+    created_line = (
+        f"\n- {('Created' if en else '建库日期')}: {created}" if created else ""
     )
+    head = [
+        f"# {repo['full_name']}",
+        "",
+        f"> {('Category' if en else '分类')}: {cat_label}{sub_part} ｜"
+        f" {('Archived' if en else '归档日期')}: {date} ｜"
+        f" github.com/trending ｜ {('Language' if en else '文档语言')}:"
+        f" {('English' if en else '中文')}",
+        "",
+        f"- {('Link' if en else '链接')}: {repo['url']}",
+        f"- {('Language' if en else '语言')}: {repo['language'] or ('unknown' if en else '未知')}"
+        f" ｜ {('Stars' if en else '总星数')}: {repo['stars']:,} {delta} ｜"
+        f" {('Forks' if en else 'Fork')}: {repo['forks']:,}",
+        created_line,
+        "",
+        f"## {('Description' if en else '简介')}",
+        "",
+        repo["desc"] or ("(no description)" if en else "（无描述）"),
+        "",
+    ]
+    tail: list[str] = []
+    if summary:
+        tail += [summary.strip(), ""]
+    else:
+        # LLM 摘要不可用（未配置 / 调用失败 / 无 README）：降级为原文摘录
+        note = (
+            "（LLM 提炼不可用，以下为 README 原文摘录）"
+            if not en
+            else "(LLM summary unavailable; raw README excerpt below)"
+        )
+        src = (readme_text or "").strip()
+        if src:
+            tail += [
+                f"> {note}",
+                "",
+                f"## {('README excerpt' if en else 'README 摘录')}",
+                "",
+                src[:1500] + ("\n\n…" if len(src) > 1500 else ""),
+                "",
+            ]
+        else:
+            tail += [f"> {note}", ""]
+    return "\n".join(head + tail)
 
 
 async def _upsert_doc(
@@ -179,6 +241,7 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
 
     names = [n.strip().strip("/") for n in body.full_names if n.strip()]
     gh_id = await _ensure_doc_folder("GitHub", None)
+    lang_suffix = "中文" if body.lang == "zh" else "EN"
 
     results: list[dict] = []
     not_found: list[str] = []
@@ -193,8 +256,28 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
         if hit["sub_label"]:
             folder_id = await _ensure_doc_folder(hit["sub_label"], folder_id)
             path_parts.append(hit["sub_label"])
-        title = f"GitHub 项目 · {fn} · {date}"
-        md = _render_repo_md(repo, hit["cat_label"], hit["sub_label"], date)
+
+        # README 抓取 + LLM 提炼（失败降级为原文摘录，不阻塞归档）
+        readme = await _fetch_readme(fn)
+        summary: str | None = None
+        if readme:
+            try:
+                summary = await llm.summarize_readme(readme, lang=body.lang)
+                # 提炼内容过一遍脱敏门禁（防 README 示例里的真实凭据被原样带出）
+                summary = gates.redact(summary, strict=True).text
+            except Exception:
+                summary = None
+
+        title = f"GitHub 项目 · {fn} · {date} · {lang_suffix}"
+        md = _render_repo_md(
+            repo,
+            hit["cat_label"],
+            hit["sub_label"],
+            date,
+            summary=summary,
+            readme_text=readme,
+            lang=body.lang,
+        )
         doc_id, created = await _upsert_doc(title, folder_id, md, ctx)
         results.append(
             {
@@ -206,6 +289,8 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
                 "sub": hit["sub_label"],
                 "stars": repo["stars"],
                 "stars_today": repo.get("stars_today"),
+                "lang": body.lang,
+                "summarized": summary is not None,
             }
         )
         # 小睡一下：批量归档时避免同时塞太多嵌入任务打爆 API 限速
@@ -220,13 +305,18 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
         ip=ctx.ip,
         detail={
             "date": date,
+            "lang": body.lang,
             "repos": [r["full_name"] for r in results],
             "not_found": not_found,
         },
     )
     return {
         "date": date,
+        "lang": body.lang,
         "results": results,
         "not_found": not_found,
-        "note": "已写入 文档区/GitHub/<分类>[/<子分类>]，索引就绪后即可搜索",
+        "note": (
+            f"已写入 文档区/GitHub/<分类>[/<子分类>]（{lang_suffix}文档，"
+            "含 README 提炼的用途与使用方法），索引就绪后即可搜索"
+        ),
     }

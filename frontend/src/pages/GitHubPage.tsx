@@ -93,6 +93,8 @@ export default function GitHubPage() {
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
   const [archiving, setArchiving] = useState("");
   const [depthLoading, setDepthLoading] = useState(false);
+  // 归档文档语言：zh=中文整理 / en=英文整理（影响新建文档内容与标题后缀）
+  const [lang, setLang] = useState<"zh" | "en">("zh");
 
   const load = useCallback(
     async (rng: string, force: boolean, depth?: number) => {
@@ -273,11 +275,13 @@ export default function GitHubPage() {
     try {
       const r = await api.post<ArchiveResult>("/github/archive", {
         full_names: names,
+        lang,
       });
       const created = r.results.filter((x) => x.created).length;
       const updated = r.results.length - created;
       const miss = r.not_found ?? [];
-      let msg = `已整理 ${r.results.length} 个项目到 文档区/GitHub/...（新建 ${created}，更新 ${updated}）`;
+      const zh = lang === "zh" ? "中文" : "英文";
+      let msg = `已整理 ${r.results.length} 个项目为${zh}文档（README 提炼用途与使用方法），新建 ${created}，更新 ${updated}`;
       if (miss.length) msg += `；未在今日热榜：${miss.join("、")}`;
       toast(msg);
     } catch (e) {
@@ -368,6 +372,17 @@ export default function GitHubPage() {
         <div className="page-head" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>GitHub 热点 · {headerLabel}</h2>
           <div className="toolbar" style={{ marginBottom: 0 }}>
+            <label className="gh-lang">
+              文档语言
+              <select
+                value={lang}
+                onChange={(e) => setLang(e.target.value === "en" ? "en" : "zh")}
+                title="整理到文档区的语言（含 README 提炼的用途与使用方法）"
+              >
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
             <Button
               disabled={refreshing}
               onClick={() => void load(range, true, data?.pages_fetched)}

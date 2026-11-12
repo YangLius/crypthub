@@ -801,3 +801,13 @@ textarea:not(.astryx-text-area textarea) {
   border-radius: 8px;
   background: #fafafa;
 }
+.gh-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.gh-lang select {
+  min-width: 96px;
+}
