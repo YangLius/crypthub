@@ -18,6 +18,8 @@ export interface CachedHit {
  project: string;
  /** 同批扫描中配对的另一条命中 slug（用户名↔密码成对认领） */
  pair?: string;
+ /** 命中附近发现的网址（用于把成对凭据识别为「网站」类型并预填 URL） */
+ url?: string;
 }
 
 const KEY = "kb_prescan_hits";
@@ -82,6 +84,7 @@ export function savePrescanHits(
  hits: ResolvedPending[],
  title: string,
  project: string,
+ urlHints?: Map<string, string>,
 ): void {
  if (!hits.length) return;
  const pairs = computeBatchPairs(hits);
@@ -90,6 +93,7 @@ export function savePrescanHits(
   title,
   project,
   pair: pairs.get(h.slug),
+  url: urlHints?.get(h.slug),
  }));
  save([
   ...load().filter((h) => !hits.some((n) => n.slug === h.slug)),
@@ -121,7 +125,8 @@ export function findPairedHit(slug: string): CachedHit | null {
  const idx = list.indexOf(self);
  const selfField = loginFieldOf(self);
  if (selfField === null) return null;
- const order = selfField === "username" ? [idx + 1, idx - 1] : [idx - 1, idx + 1];
+ const order =
+  selfField === "username" ? [idx + 1, idx - 1] : [idx - 1, idx + 1];
  for (const i of order) {
   const h = list[i];
   if (!h || h.title !== self.title) continue;
@@ -162,6 +167,66 @@ export function suggestFields(hit: {
 }
 
 const PH_RE = /\{\{secret:[a-f0-9]{6,64}\}\}/g;
+
+/** 完整链接（http(s):// 或 www. 开头）；排除常见中文标点与闭合符号 */
+const URL_LINE_RE = /(?:https?:\/\/|www\.)[^\s"'<>，。；、）】》"']{3,150}/i;
+/** 网址类键值行：网址/域名/站点/网站：xxx（不含“地址/host”，避免把服务器 IP 当网址） */
+const URL_KV_RE = /(?:网址|域名|站点|网站|url)\s*[:：=]\s*([^\s，。；、）】》"']{3,150})/i;
+
+function urlInWindow(win: string): string | undefined {
+ const strip = (s: string) => s.replace(/[.,;:)）】》]+$/, "");
+ const line = win.match(URL_LINE_RE);
+ if (line)
+  return line[0].startsWith("www.") ? `https://${line[0]}` : strip(line[0]);
+ const kv = win.match(URL_KV_RE);
+ if (kv) return strip(kv[1]);
+ return undefined;
+}
+
+const URL_WINDOW = 400; // 命中±400 字符内找网址线索
+
+/**
+ * 从原文中提取每个命中附近的网址（纯函数，便于单测）。
+ * hits 需带原文位置（start/end）与对应 slug。
+ */
+export function urlHintsFromText(
+ text: string,
+ hits: { start: number; end: number; slug: string }[],
+): Map<string, string> {
+ const hints = new Map<string, string>();
+ for (const h of hits) {
+  if (!h.slug) continue;
+  const win = text.slice(
+   Math.max(0, h.start - URL_WINDOW),
+   Math.min(text.length, h.end + URL_WINDOW),
+  );
+  const url = urlInWindow(win);
+  if (url) hints.set(h.slug, url);
+ }
+ return hints;
+}
+
+/**
+ * 存量待认领兑底：服务端脱敏文本里网址未被替换（不是凭据），
+ * 按占位符位置在附近找网址，供认领时把用户名+密码识别为「网站」类型。
+ */
+export function urlHintsFromRedacted(
+ redacted: string,
+ slugs: string[],
+): Map<string, string> {
+ const hints = new Map<string, string>();
+ for (const slug of slugs) {
+  const at = redacted.indexOf(`{{secret:${slug}}}`);
+  if (at < 0) continue;
+  const win = redacted.slice(
+   Math.max(0, at - URL_WINDOW),
+   Math.min(redacted.length, at + URL_WINDOW + 20),
+  );
+  const url = urlInWindow(win);
+  if (url) hints.set(slug, url);
+ }
+ return hints;
+}
 
 export interface MatchResult {
  /** slug → 本机原文命中值 */

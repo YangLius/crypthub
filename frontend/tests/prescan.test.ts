@@ -5,8 +5,11 @@ import {
   removePrescanHit,
   savePrescanHits,
   suggestFields,
+  urlHintsFromRedacted,
+  urlHintsFromText,
   type CachedHit,
 } from "../src/secrets/prescanCache";
+import { guessTemplate } from "../src/secrets/templates";
 import { redactAll } from "../src/gates/redact";
 
 // vitest node 环境没有 sessionStorage，桩一个内存实现
@@ -208,21 +211,16 @@ describe("用户名↔密码成对认领（findPairedHit）", () => {
   const saveBatch = (
     rows: { slug: string; kind: string; value: string }[],
     title = "运维手册",
-  ) => savePrescanHits(rows.map((r) => ({ ...r })) as never[], title, "billing");
+  ) =>
+    savePrescanHits(rows.map((r) => ({ ...r })) as never[], title, "billing");
 
   it("相邻的用户名+密码配成一对（顺序两种都支持）", () => {
-    saveBatch([
-      up("u1", "用户名：admin"),
-      up("p1", "密码：Xx123456$"),
-    ]);
+    saveBatch([up("u1", "用户名：admin"), up("p1", "密码：Xx123456$")]);
     expect(findPairedHit("u1")?.slug).toBe("p1");
     expect(findPairedHit("p1")?.slug).toBe("u1");
 
     store.clear();
-    saveBatch([
-      up("p2", "密码：Xx123456$"),
-      up("u2", "账号：root"),
-    ]);
+    saveBatch([up("p2", "密码：Xx123456$"), up("u2", "账号：root")]);
     expect(findPairedHit("p2")?.slug).toBe("u2");
     expect(findPairedHit("u2")?.slug).toBe("p2");
   });
@@ -270,5 +268,62 @@ describe("用户名↔密码成对认领（findPairedHit）", () => {
     saveBatch([up("u9", "用户名：admin"), up("p9", "密码：Xx123456$")]);
     removePrescanHit("u9");
     expect(findPairedHit("p9")).toBeNull();
+  });
+});
+
+describe("网址线索识别（urlHints）", () => {
+  const pos = (text: string, kw: string) => {
+    const start = text.indexOf(kw);
+    return { start, end: start + kw.length + 10 };
+  };
+
+  it("命中附近的完整链接被提取，用户名+密码+网址 → 网站类型", () => {
+    const text =
+      "财务系统 https://fin.example.com/login\n用户名：admin\n密码：Xx123456$";
+    const hints = urlHintsFromText(text, [
+      { slug: "u1", ...pos(text, "用户名") },
+      { slug: "p1", ...pos(text, "密码") },
+    ]);
+    expect(hints.get("u1")).toBe("https://fin.example.com/login");
+    expect(hints.get("p1")).toBe("https://fin.example.com/login");
+    expect(
+      guessTemplate({
+        username: "admin",
+        password: "Xx123456$",
+        url: hints.get("u1"),
+      }),
+    ).toBe("web");
+  });
+
+  it("www. 前缀自动补 https://；无 scheme 的 域名： 行也能提取", () => {
+    const t1 = "官网 www.demo.cn\n账号：ops\n密码：Passw0rd!";
+    const h1 = urlHintsFromText(t1, [{ slug: "s1", ...pos(t1, "账号") }]);
+    expect(h1.get("s1")).toBe("https://www.demo.cn");
+
+    const t2 = "域名：portal.corp.com\n用户名：u\n密码：p";
+    const h2 = urlHintsFromText(t2, [{ slug: "s2", ...pos(t2, "用户名") }]);
+    expect(h2.get("s2")).toBe("portal.corp.com");
+  });
+
+  it("远离命中的网址不算线索；服务器地址（IP）不误识别", () => {
+    const t1 =
+      "网址：https://far.example.com\n" + "x".repeat(450) + "\n用户名：admin\n密码：p";
+    const h1 = urlHintsFromText(t1, [{ slug: "f1", ...pos(t1, "用户名") }]);
+    expect(h1.size).toBe(0);
+
+    const t2 = "服务器地址：10.0.0.8\n用户名：admin\n密码：p";
+    const h2 = urlHintsFromText(t2, [
+      { slug: "f2", ...pos(t2, "用户名") },
+      { slug: "f3", ...pos(t2, "密码") },
+    ]);
+    expect(h2.size).toBe(0);
+  });
+
+  it("urlHintsFromRedacted：按占位符位置在脱敏文本里找网址（存量兕底）", () => {
+    const redacted =
+      "入口 https://s.example.com\n{{secret:aaaaaa01}}\n{{secret:bbbbbb02}}";
+    const hints = urlHintsFromRedacted(redacted, ["aaaaaa01", "bbbbbb02"]);
+    expect(hints.get("aaaaaa01")).toBe("https://s.example.com");
+    expect(hints.get("bbbbbb02")).toBe("https://s.example.com");
   });
 });

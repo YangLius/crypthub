@@ -34,7 +34,9 @@ import {
   removePrescanHit,
   savePrescanHits,
   suggestFields,
+  urlHintsFromRedacted,
   type CachedHit,
+  type ContentPatch,
 } from "../secrets/prescanCache";
 import {
   Badge,
@@ -991,7 +993,8 @@ function CreateModal({
   const [mirror, setMirror] = useState<MirroredFolder | null>(null);
 
   // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段；
-  // 用户名↔密码配对的另一条也一并回填（成对认领，类型自动选“用户名密码”）
+  // 用户名↔密码配对的另一条也一并回填；命中附近有网址时自动识别为「网站」类型；
+  // 存量缓存（无 url 线索）从服务端脱敏文本的占位符附近兕底找一次网址
   useEffect(() => {
     if (!pendingRow) return;
     const hit = peekPrescanHit(pendingRow.slug);
@@ -1001,11 +1004,37 @@ function CreateModal({
     setCachedPair(paired);
     if (hit.title) setName(hit.title);
     if (hit.project) setProject(hit.project);
-    const merged = paired
+    const merged: ContentPatch = paired
       ? { ...suggestFields(hit), ...suggestFields(paired) }
       : suggestFields(hit);
+    const url = paired?.url ?? hit.url;
+    if (url) merged.url = url;
     setContent((c) => ({ ...c, ...merged }));
     setTplId(guessTemplate({ ...EMPTY_CONTENT, ...merged }));
+    if (!url && pendingRow.source_doc_id) {
+      let alive = true;
+      api
+        .get<{ text: string }>(
+          `/documents/${pendingRow.source_doc_id}/redacted`,
+        )
+        .then((r) => {
+          if (!alive) return;
+          const slugs = [pendingRow.slug, paired?.slug].filter(
+            Boolean,
+          ) as string[];
+          const hints = urlHintsFromRedacted(r.text, slugs);
+          const u = hints.get(pendingRow.slug) ?? hints.get(slugs[1] ?? "");
+          if (!u) return;
+          setContent((c) => ({ ...c, url: u }));
+          setTplId(
+            guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }),
+          );
+        })
+        .catch(() => {}); // 非客户端脱敏文档或临时失败：保持当前类型
+      return () => {
+        alive = false;
+      };
+    }
   }, [pendingRow]);
 
   // 解析源文档目录链并镜像到密钥区；失败不阻塞（mirror 保持 null → 不归档）
@@ -1060,7 +1089,9 @@ function CreateModal({
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       if (cachedPair) removePrescanHit(cachedPair.slug); // 配对命中一并删除
       toast(
-        cachedPair ? "已创建（用户名+密码成对认领，内容仅存密文）" : "已创建（内容仅存密文）",
+        cachedPair
+          ? "已创建（用户名+密码成对认领，内容仅存密文）"
+          : "已创建（内容仅存密文）",
       );
       onDone(sid, cachedPair?.slug);
     } catch (e) {

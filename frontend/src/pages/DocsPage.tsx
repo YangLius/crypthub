@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { isTextLike, redactAll, scan, type Hit } from "../gates/redact";
 import { savePrescanHits } from "../secrets/prescanCache";
+import { urlHintsFromText } from "../secrets/prescanCache";
 import { toast, toastErr } from "../store";
 import {
   Badge,
@@ -162,10 +163,19 @@ export default function DocsPage() {
     }
     const rd = redactAll(scanning.text);
     // 命中原文只存本机 sessionStorage，供密钥区“新建并认领”时回填；绝不发给服务端
+    // 同一 zip 记录每个命中附近的网址线索（成对凭据 → 「网站」类型 + 预填 URL）
     savePrescanHits(
       rd.resolved,
       meta.title || scanning.file.name,
       meta.project,
+      urlHintsFromText(
+        scanning.text,
+        scanning.hits.map((h, i) => ({
+          start: h.start,
+          end: h.end,
+          slug: rd.resolved[i]?.slug ?? "",
+        })),
+      ),
     );
     const redactedFile = new File([rd.text], scanning.file.name, {
       type: "text/plain",
