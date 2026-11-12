@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -22,9 +23,13 @@ router = APIRouter(prefix="/github", tags=["github"])
 
 
 @router.get("/trending")
-async def trending_view(force: bool = False, ctx: Ctx = Depends(current_user)) -> dict:
+async def trending_view(
+    range: str = "daily", force: bool = False, ctx: Ctx = Depends(current_user)
+) -> dict:
     try:
-        return await trending.fetch_daily(force=force)
+        return await trending.get_range(range, force=force)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
     except Exception as e:
         raise HTTPException(502, f"抓取 GitHub Trending 失败：{str(e)[:200]}") from None
 
@@ -62,8 +67,17 @@ async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
     return row["id"]
 
 
-def _render_repo_md(repo: dict, cat_label: str, sub_label: str | None, date: str) -> str:
+def _render_repo_md(
+    repo: dict, cat_label: str, sub_label: str | None, date: str
+) -> str:
     sub_part = f" / {sub_label}" if sub_label else ""
+    delta = (
+        f"｜ 今日新增：+{repo['stars_today']:,}"
+        if repo.get("stars_today") is not None
+        else "｜ 每日新增：未知（新星池）"
+    )
+    created = repo.get("created_at")
+    created_line = f"\n- 建库日期：{created}" if created else ""
     return "\n".join(
         [
             f"# {repo['full_name']}",
@@ -72,7 +86,8 @@ def _render_repo_md(repo: dict, cat_label: str, sub_label: str | None, date: str
             "",
             f"- 链接：{repo['url']}",
             f"- 语言：{repo['language'] or '未知'} ｜ 总星数：{repo['stars']:,}"
-            f" ｜ 今日新增：+{repo['stars_today']:,} ｜ Fork：{repo['forks']:,}",
+            f" {delta} ｜ Fork：{repo['forks']:,}",
+            created_line,
             "",
             "## 简介",
             "",
@@ -143,16 +158,16 @@ async def _upsert_doc(
 
 @router.post("/archive")
 async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
-    try:
-        data = await trending.fetch_daily()
-    except Exception as e:
-        raise HTTPException(502, f"抓取 GitHub Trending 失败：{str(e)[:200]}") from None
+    # 归档索引：合并今日/本周/本月/新星四个范围（各自有缓存，失败的范围跳过）
+    payloads: list[dict] = []
+    for rk in trending.RANGE_KEYS:
+        with contextlib.suppress(Exception):
+            payloads.append(await trending.get_range(rk))
+    if not payloads:
+        raise HTTPException(502, "GitHub 数据不可用（请稍后重试或检查网络）")
+    index = trending.repo_index(payloads)
+    date = payloads[0].get("date", "")
 
-    index = {
-        r["full_name"]: (cat, r)
-        for cat in data["categories"]
-        for r in cat["repos"]
-    }
     names = [n.strip().strip("/") for n in body.full_names if n.strip()]
     gh_id = await _ensure_doc_folder("GitHub", None)
 
@@ -163,14 +178,14 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
         if hit is None:
             not_found.append(fn)
             continue
-        cat, repo = hit
-        folder_id, path_parts = gh_id, ["GitHub", cat["label"]]
-        folder_id = await _ensure_doc_folder(cat["label"], gh_id)
-        if repo.get("sub") and repo.get("sub_label"):
-            folder_id = await _ensure_doc_folder(repo["sub_label"], folder_id)
-            path_parts.append(repo["sub_label"])
-        title = f"GitHub 项目 · {fn} · {data['date']}"
-        md = _render_repo_md(repo, cat["label"], repo.get("sub_label"), data["date"])
+        repo = hit["repo"]
+        folder_id, path_parts = gh_id, ["GitHub", hit["cat_label"]]
+        folder_id = await _ensure_doc_folder(hit["cat_label"], gh_id)
+        if hit["sub_label"]:
+            folder_id = await _ensure_doc_folder(hit["sub_label"], folder_id)
+            path_parts.append(hit["sub_label"])
+        title = f"GitHub 项目 · {fn} · {date}"
+        md = _render_repo_md(repo, hit["cat_label"], hit["sub_label"], date)
         doc_id, created = await _upsert_doc(title, folder_id, md, ctx)
         results.append(
             {
@@ -178,10 +193,10 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
                 "doc_id": doc_id,
                 "created": created,
                 "path": "/".join(path_parts),
-                "category": cat["label"],
-                "sub": repo.get("sub_label"),
+                "category": hit["cat_label"],
+                "sub": hit["sub_label"],
                 "stars": repo["stars"],
-                "stars_today": repo["stars_today"],
+                "stars_today": repo.get("stars_today"),
             }
         )
         # 小睡一下：批量归档时避免同时塞太多嵌入任务打爆 API 限速
@@ -195,13 +210,13 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
         user=ctx.user,
         ip=ctx.ip,
         detail={
-            "date": data["date"],
+            "date": date,
             "repos": [r["full_name"] for r in results],
             "not_found": not_found,
         },
     )
     return {
-        "date": data["date"],
+        "date": date,
         "results": results,
         "not_found": not_found,
         "note": "已写入 文档区/GitHub/<分类>[/<子分类>]，索引就绪后即可搜索",

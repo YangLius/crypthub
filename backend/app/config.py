@@ -92,6 +92,9 @@ class Settings:
     # OCR（M1 默认关闭）
     ocr_enabled: bool = _bool(os.getenv("OCR_ENABLED"), False)
 
+    # GitHub 新星池（Search API）可选令牌：配置后限速从 10 次/分 提升到 30 次/分
+    github_token: str = os.getenv("GITHUB_TOKEN", "").strip()
+
     def require_llm(self) -> tuple[str, str, str]:
         if not (self.llm_api_base and self.llm_api_key and self.llm_model):
             raise RuntimeError(

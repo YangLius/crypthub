@@ -12,6 +12,13 @@ import { Button, Empty, Spinner } from "../components/ui";
 
 const PER_PAGE = 10;
 
+const RANGES: Array<{ key: string; label: string }> = [
+  { key: "daily", label: "今日热榜" },
+  { key: "weekly", label: "本周热榜" },
+  { key: "monthly", label: "本月热榜" },
+  { key: "new", label: "近7天新星" },
+];
+
 interface Repo {
   full_name: string;
   url: string;
@@ -19,7 +26,7 @@ interface Repo {
   language: string;
   stars: number;
   forks: number;
-  stars_today: number;
+  stars_today: number | null;
   sub: string | null;
   sub_label: string | null;
 }
@@ -43,6 +50,8 @@ interface TaxoCat {
 }
 
 interface TrendData {
+  range: string;
+  delta_label: string | null;
   date: string;
   fetched_at: string;
   total: number;
@@ -70,6 +79,7 @@ export default function GitHubPage() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [range, setRange] = useState("daily");
   const [sel, setSel] = useState<{ cat: string | null; sub: string | null }>({
     cat: null,
     sub: null,
@@ -80,12 +90,16 @@ export default function GitHubPage() {
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
   const [archiving, setArchiving] = useState("");
 
-  const load = useCallback(async (force: boolean) => {
+  const load = useCallback(async (rng: string, force: boolean) => {
     if (force) setRefreshing(true);
     else setLoading(true);
     setErr("");
     try {
-      setData(await api.get<TrendData>(`/github/trending${force ? "?force=true" : ""}`));
+      setData(
+        await api.get<TrendData>(
+          `/github/trending?range=${rng}${force ? "&force=true" : ""}`,
+        ),
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
     } finally {
@@ -95,7 +109,7 @@ export default function GitHubPage() {
   }, []);
 
   useEffect(() => {
-    void load(false);
+    void load("daily", false);
   }, [load]);
 
   // ---- 数据派生 ----
@@ -108,7 +122,8 @@ export default function GitHubPage() {
   const allRepos = useMemo(() => {
     const out: Array<Repo & { cat: string; cat_label: string }> = [];
     for (const c of data?.categories ?? [])
-      for (const r of c.repos) out.push({ ...r, cat: c.key, cat_label: c.label });
+      for (const r of c.repos)
+        out.push({ ...r, cat: c.key, cat_label: c.label });
     return out;
   }, [data]);
 
@@ -122,16 +137,29 @@ export default function GitHubPage() {
   const sorted = useMemo(() => {
     const rows = [...visible];
     if (board === "total") {
-      rows.sort((a, b) => b.stars - a.stars || b.stars_today - a.stars_today || a.full_name.localeCompare(b.full_name));
+      rows.sort(
+        (a, b) =>
+          b.stars - a.stars ||
+          (b.stars_today ?? 0) - (a.stars_today ?? 0) ||
+          a.full_name.localeCompare(b.full_name),
+      );
     } else {
-      rows.sort((a, b) => b.stars_today - a.stars_today || b.stars - a.stars || a.full_name.localeCompare(b.full_name));
+      rows.sort(
+        (a, b) =>
+          (b.stars_today ?? 0) - (a.stars_today ?? 0) ||
+          b.stars - a.stars ||
+          a.full_name.localeCompare(b.full_name),
+      );
     }
     return rows;
   }, [visible, board]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
   const safePage = Math.min(page, totalPages);
-  const pageItems = sorted.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+  const pageItems = sorted.slice(
+    (safePage - 1) * PER_PAGE,
+    safePage * PER_PAGE,
+  );
 
   const countCat = useCallback(
     (key: string) => catMap.get(key)?.count ?? 0,
@@ -148,13 +176,18 @@ export default function GitHubPage() {
       ? `全部（${data?.total ?? 0}）`
       : `${catMap.get(sel.cat)?.label ?? sel.cat}${sel.sub === null ? "" : ` / ${sel.sub}`}`;
 
-  // 切换分类/榜单时重置页码与勾选
+  // 切换分类/榜单/范围时重置页码与勾选
   useEffect(() => {
     setPage(1);
     setChecked(new Set());
-  }, [sel, board]);
+  }, [sel, board, range]);
 
   // ---- 动作 ----
+  const pickRange = (rng: string) => {
+    setRange(rng);
+    setSel({ cat: null, sub: null });
+    if (rng === "new") setBoard("total");
+  };
   const pickCat = (key: string | null) => {
     setSel({ cat: key, sub: null });
     if (key !== null)
@@ -164,7 +197,8 @@ export default function GitHubPage() {
         return next;
       });
   };
-  const pickSub = (catKey: string, subKey: string) => setSel({ cat: catKey, sub: subKey });
+  const pickSub = (catKey: string, subKey: string) =>
+    setSel({ cat: catKey, sub: subKey });
   const toggleOpen = (key: string) =>
     setOpenCats((prev) => {
       const next = new Set(prev);
@@ -195,7 +229,9 @@ export default function GitHubPage() {
     if (names.length === 0) return;
     setArchiving(names.length === 1 ? names[0] : "__batch__");
     try {
-      const r = await api.post<ArchiveResult>("/github/archive", { full_names: names });
+      const r = await api.post<ArchiveResult>("/github/archive", {
+        full_names: names,
+      });
       const created = r.results.filter((x) => x.created).length;
       const updated = r.results.length - created;
       const miss = r.not_found ?? [];
@@ -221,7 +257,7 @@ export default function GitHubPage() {
     return (
       <div className="card">
         <div className="blocked-banner">{err}</div>
-        <Button kind="primary" onClick={() => void load(true)}>
+        <Button kind="primary" onClick={() => void load(range, true)}>
           重试（强制刷新）
         </Button>
       </div>
@@ -287,7 +323,7 @@ export default function GitHubPage() {
         <div className="page-head" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>GitHub 热点 · {headerLabel}</h2>
           <div className="toolbar" style={{ marginBottom: 0 }}>
-            <Button disabled={refreshing} onClick={() => void load(true)}>
+            <Button disabled={refreshing} onClick={() => void load(range, true)}>
               {refreshing ? "刷新中…" : "强制刷新"}
             </Button>
             <Button
@@ -302,27 +338,48 @@ export default function GitHubPage() {
           </div>
         </div>
         <div className="secret-hint">
-          {data.date} · 共 {data.total} 个上榜项目 · 抓取时间 {data.fetched_at.slice(11, 16)}
-          （缓存 1 小时）。点「整理」把单个项目关键信息归档到 文档区/GitHub/分类[/子分类]；
-          勾选多个后可批量整理（同日重复整理=更新）。
+          {data.date} ·{" "}
+          {RANGES.find((x) => x.key === data.range)?.label ?? data.range}：共{" "}
+          {data.total} 个项目 · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
+          小时）。官方每日/每周/每月热榜各仅 10 个；「近7天新星」为 Search API 近 7
+          天新建高星仓库（最多约 300 个）。点「整理」归档到
+          文档区/GitHub/分类[/子分类]；勾选后可批量整理（同日重复整理=更新）。
+        </div>
+
+        {/* 数据范围切换 */}
+        <div className="gh-tabs">
+          {RANGES.map((x) => (
+            <button
+              key={x.key}
+              className={`gh-tab ${range === x.key ? "gh-tab-on" : ""}`}
+              onClick={() => pickRange(x.key)}
+            >
+              {x.label}
+            </button>
+          ))}
         </div>
 
         {/* 双榜切换 */}
         <div className="gh-tabs">
+          {range !== "new" && (
+            <button
+              className={`gh-tab ${board === "hot" ? "gh-tab-on" : ""}`}
+              onClick={() => setBoard("hot")}
+            >
+              🔥 {data.delta_label ?? "增量"}榜
+            </button>
+          )}
           <button
-            className={`gh-tab ${board === "hot" ? "gh-tab-on" : ""}`}
-            onClick={() => setBoard("hot")}
-          >
-            🔥 热榜（今日新增）
-          </button>
-          <button
-            className={`gh-tab ${board === "total" ? "gh-tab-on" : ""}`}
+            className={`gh-tab ${
+              board === "total" || range === "new" ? "gh-tab-on" : ""
+            }`}
             onClick={() => setBoard("total")}
           >
             ⭐ 总星榜
           </button>
           <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
             本分类 {sorted.length} 个 · 第 {safePage}/{totalPages} 页
+            {range === "new" ? " · 新星池无每日增量数据" : ""}
           </span>
         </div>
 
@@ -336,7 +393,10 @@ export default function GitHubPage() {
                   <th style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={pageItems.length > 0 && pageItems.every((r) => checked.has(r.full_name))}
+                      checked={
+                        pageItems.length > 0 &&
+                        pageItems.every((r) => checked.has(r.full_name))
+                      }
                       onChange={togglePage}
                     />
                   </th>
@@ -346,7 +406,7 @@ export default function GitHubPage() {
                   <th>简介</th>
                   <th style={{ width: 90 }}>语言</th>
                   <th style={{ width: 90 }}>总星</th>
-                  <th style={{ width: 90 }}>今日新增</th>
+                  <th style={{ width: 90 }}>{data.delta_label ?? "每日新增"}</th>
                   <th style={{ width: 76 }}>操作</th>
                 </tr>
               </thead>
@@ -360,7 +420,9 @@ export default function GitHubPage() {
                         onChange={() => toggleOne(r.full_name)}
                       />
                     </td>
-                    <td className="muted">{(safePage - 1) * PER_PAGE + i + 1}</td>
+                    <td className="muted">
+                      {(safePage - 1) * PER_PAGE + i + 1}
+                    </td>
                     <td>
                       <a href={r.url} target="_blank" rel="noreferrer">
                         {r.full_name}
@@ -375,7 +437,16 @@ export default function GitHubPage() {
                     </td>
                     <td>{r.language || "—"}</td>
                     <td>⭐ {r.stars.toLocaleString()}</td>
-                    <td style={{ color: "var(--ok)" }}>+{r.stars_today.toLocaleString()}</td>
+                    <td
+                      style={{
+                        color:
+                          r.stars_today === null ? "var(--muted)" : "var(--ok)",
+                      }}
+                    >
+                      {r.stars_today === null
+                        ? "—"
+                        : `+${r.stars_today.toLocaleString()}`}
+                    </td>
                     <td>
                       <Button
                         disabled={!!archiving}
@@ -390,13 +461,19 @@ export default function GitHubPage() {
             </table>
             {totalPages > 1 && (
               <div className="gh-pager">
-                <Button disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>
+                <Button
+                  disabled={safePage <= 1}
+                  onClick={() => setPage(safePage - 1)}
+                >
                   ← 上一页
                 </Button>
                 <span>
                   第 {safePage} / {totalPages} 页
                 </span>
-                <Button disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>
+                <Button
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage(safePage + 1)}
+                >
                   下一页 →
                 </Button>
               </div>
