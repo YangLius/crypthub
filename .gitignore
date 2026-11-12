@@ -27,3 +27,6 @@ Thumbs.db
 
 # vitest 输出
 .vitest/
+
+# 日志目录
+logs/
