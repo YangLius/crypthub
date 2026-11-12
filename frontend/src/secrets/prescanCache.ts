@@ -9,6 +9,7 @@
  */
 import type { SecretContent } from "../crypto/flows";
 import type { Hit, ResolvedPending } from "../gates/redact";
+import { api } from "../api/client";
 
 export interface CachedHit {
  slug: string;
@@ -282,4 +283,93 @@ export function matchPendingsToLocal(
   }
  }
  return { pairs, total: phs.length };
+}
+
+// ---------- 待认领成对配对（文档页 / 密钥区共用） ----------
+
+/**
+ * 从服务端脱敏文本推断「用户名↔密码」配对（纯函数，可测试）。
+ *
+ * 零知识约束：脱敏文本只含「键名：{{secret:slug}}」占位符，没有原文值，
+ * 因此仅凭占位符与键名结构配对，不接触任何凭据值。
+ *
+ * 新格式（键名保留）：相邻的「用户名：{{…}} + 密码：{{…}}」成对；
+ * 旧格式（无键名，占位符顶格）：按出现顺序「用户名在前、密码在后」两两配对。
+ */
+export function pairSlugsFromRedacted(
+  text: string,
+  slugs: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const labeled = [
+    ...text.matchAll(
+      /(用户名|账号|帐号|密码|口令)\s*[:：]\s*\{\{secret:([0-9a-f]+)\}\}/g,
+    ),
+  ];
+  if (labeled.length >= 2) {
+    for (let i = 0; i + 1 < labeled.length; i += 2) {
+      const a = labeled[i];
+      const b = labeled[i + 1];
+      const aUser = /用户名|账号|帐号/.test(a[1]);
+      const bUser = /用户名|账号|帐号/.test(b[1]);
+      if (aUser && !bUser) {
+        out[a[2]] = b[2];
+        out[b[2]] = a[2];
+      }
+    }
+    return out;
+  }
+  const ordered = slugs
+    .filter((s) => text.includes(`{{secret:${s}}}`))
+    .sort(
+      (x, y) =>
+        text.indexOf(`{{secret:${x}}}`) - text.indexOf(`{{secret:${y}}}`),
+    );
+  for (let i = 0; i + 1 < ordered.length; i += 2) {
+    out[ordered[i]] = ordered[i + 1];
+    out[ordered[i + 1]] = ordered[i];
+  }
+  return out;
+}
+
+/**
+ * 为待认领行构建 slug→配对slug 映射（文档页与密钥区共用的成对合并依据）。
+ *
+ * 配对来源：
+ *  ① 本机预扫缓存（同标签页上传，最准，含显式 pair 与旧格式邻接兜底）；
+ *  ② 服务端脱敏文本占位符结构推断（跨标签页兜底；只读占位符与键名，
+ *     原文值始终只在浏览器，零知识不受影响）。
+ */
+export async function buildPairMap(
+  rows: { slug: string; source_doc_id: string | null }[],
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const p of rows) {
+    const hit = peekPrescanHit(p.slug);
+    const paired = hit ? findPairedHit(p.slug) : null;
+    if (paired) {
+      out[p.slug] = paired.slug;
+      out[paired.slug] = p.slug;
+    }
+  }
+  const missing = rows.filter((p) => !out[p.slug]);
+  const byDoc = new Map<string, string[]>();
+  for (const p of missing) {
+    if (p.source_doc_id)
+      byDoc.set(p.source_doc_id, [
+        ...(byDoc.get(p.source_doc_id) ?? []),
+        p.slug,
+      ]);
+  }
+  for (const [docId, slugs] of byDoc) {
+    try {
+      const r = await api.get<{ text: string }>(
+        `/documents/${docId}/redacted`,
+      );
+      Object.assign(out, pairSlugsFromRedacted(r.text, slugs));
+    } catch {
+      // 无可读脱敏文本（如非客户端脱敏上传）：放弃配对，逐条显示
+    }
+  }
+  return out;
 }

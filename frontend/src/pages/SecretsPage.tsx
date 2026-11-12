@@ -1,5 +1,6 @@
 /**
  * 密钥区（设计 M2/M3）：解锁门 → 条目列表 → 创建/查看/共享/轮换/删除/历史。
+ * 待认领成对合并与文档区共用 prescanCache.buildPairMap（本机缓存 + 服务端脱敏文本结构推断）。
  * 所有加解密在浏览器完成；服务端只搬密文。
  * 创建条目时由客户端生成 UUID（AAD 需预先绑定 id），服务端原样落库。
  */
@@ -37,6 +38,7 @@ import {
   urlHintsFromRedacted,
   type CachedHit,
   type ContentPatch,
+  buildPairMap,
 } from "../secrets/prescanCache";
 import {
   Badge,
@@ -349,72 +351,14 @@ function SecretList(props: {
 
   // 成对分组：同一组“用户名+密码”的两条占位符合并为一行展示；
   // 接管一次创建一条密钥，提交后两行一并销掉（CreateModal 内已处理双回填/双认领）
-  // 配对来源：① 本机预扫缓存（同标签页上传，最准）② 服务端脱敏文本占位符
-  // 顺序/标签推断（跨标签页兑底；凭据值始终只在浏览器，零知识不受影响）
+  // 配对来源统一走 prescanCache.buildPairMap（本机缓存 + 服务端脱敏文本结构推断，
+  // 与文档区待认领面板共用同一实现，避免两处规则漂移）
   const [pairMap, setPairMap] = useState<Record<string, string>>({});
   useEffect(() => {
     let alive = true;
-    void (async () => {
-      const out: Record<string, string> = {};
-      for (const p of pending) {
-        const hit = peekPrescanHit(p.slug);
-        const paired = hit ? findPairedHit(p.slug) : null;
-        if (paired) {
-          out[p.slug] = paired.slug;
-          out[paired.slug] = p.slug;
-        }
-      }
-      const missing = pending.filter((p) => !out[p.slug]);
-      const byDoc = new Map<string, string[]>();
-      for (const p of missing) {
-        if (p.source_doc_id)
-          byDoc.set(p.source_doc_id, [
-            ...(byDoc.get(p.source_doc_id) ?? []),
-            p.slug,
-          ]);
-      }
-      for (const [docId, slugs] of byDoc) {
-        try {
-          const r = await api.get<{ text: string }>(
-            `/documents/${docId}/redacted`,
-          );
-          // 新格式：键名保留在占位符前 → 相邻「用户名+密码」成组
-          const labeled = [
-            ...r.text.matchAll(
-              /(用户名|账号|帐号|密码|口令)\s*[:：]\s*\{\{secret:([0-9a-f]+)\}\}/g,
-            ),
-          ];
-          if (labeled.length >= 2) {
-            for (let i = 0; i + 1 < labeled.length; i += 2) {
-              const a = labeled[i];
-              const b = labeled[i + 1];
-              const aUser = /用户名|账号|帐号/.test(a[1]);
-              const bUser = /用户名|账号|帐号/.test(b[1]);
-              if (aUser && !bUser) {
-                out[a[2]] = b[2];
-                out[b[2]] = a[2];
-              }
-            }
-          } else {
-            // 旧格式（无标签）：占位符按出现顺序「用户名在前、密码在后」两两配对
-            const ordered = slugs
-              .filter((s) => r.text.includes(`{{secret:${s}}}`))
-              .sort(
-                (x, y) =>
-                  r.text.indexOf(`{{secret:${x}}}`) -
-                  r.text.indexOf(`{{secret:${y}}}`),
-              );
-            for (let i = 0; i + 1 < ordered.length; i += 2) {
-              out[ordered[i]] = ordered[i + 1];
-              out[ordered[i + 1]] = ordered[i];
-            }
-          }
-        } catch {
-          // 无可读脱敏文本：放弃配对，逐条显示
-        }
-      }
-      if (alive) setPairMap(out);
-    })();
+    void buildPairMap(pending).then((m) => {
+      if (alive) setPairMap(m);
+    });
     return () => {
       alive = false;
     };
@@ -495,22 +439,15 @@ function SecretList(props: {
                   {r.is_owner && <Badge tone="info">拥有</Badge>}
                 </td>
                 <td>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    style={{
-                      cursor: "pointer",
-                      textDecoration: "underline dotted",
-                    }}
+                  <button
+                    type="button"
+                    className="linkish-btn"
+                    style={{ cursor: "pointer" }}
                     title="点击筛选该目录"
                     onClick={() => onPickFolder(r.folder_id ?? "root")}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ")
-                        onPickFolder(r.folder_id ?? "root");
-                    }}
                   >
                     {r.folder_id ? (paths.get(r.folder_id) ?? "—") : "根目录"}
-                  </span>
+                  </button>
                 </td>
                 <td>{r.project || "—"}</td>
                 <td>
@@ -1073,6 +1010,39 @@ function ImportModal({
   );
 }
 
+/** 认领占位符提示文案（按缓存命中/成对状态选择，避免 JSX 内嵌套三元） */
+function claimHintText(hasHit: boolean, hasPair: boolean): string {
+  if (hasPair)
+    return "（已自动成对填入上传预扫时的用户名+密码，请核对后提交；提交后两条待认领一并销掉）";
+  if (hasHit)
+    return "（已自动填入上传预扫时的命中值，请核对后提交；提交后本机缓存即删除）";
+  return "（服务端从不保存命中原文，本机缓存中也没有该值，请凭记忆填入）";
+}
+
+/** 字段视图（ViewModal 字段卡片渲染用） */
+interface SecretFieldView {
+  key: string;
+  label: string;
+  value: string;
+  mono?: boolean;
+  mask?: boolean;
+  shown?: boolean;
+  link?: boolean;
+}
+
+/** 字段值渲染：掩码 > 链接 > 纯文本（避免 JSX 内嵌套三元） */
+function renderFieldValue(f: SecretFieldView): React.ReactNode {
+  if (f.mask && !f.shown)
+    return <span className="sf-masked">••••••••••••</span>;
+  if (f.link)
+    return (
+      <a href={f.value} target="_blank" rel="noreferrer">
+        {f.value}
+      </a>
+    );
+  return f.value;
+}
+
 function CreateModal({
   myUserId,
   pendingRow,
@@ -1296,11 +1266,12 @@ function CreateModal({
   // 默认合并目标：优先用户名精确匹配，其次缺用户名的条目（等待补齐）
   useEffect(() => {
     if (!mergeCandidates.length) return;
-    const patch = cachedPair
-      ? { ...suggestFields(cachedHit!), ...suggestFields(cachedPair) }
-      : cachedHit
-        ? suggestFields(cachedHit)
-        : null;
+    let patch: ContentPatch | null = null;
+    if (cachedPair && cachedHit) {
+      patch = { ...suggestFields(cachedHit), ...suggestFields(cachedPair) };
+    } else if (cachedHit) {
+      patch = suggestFields(cachedHit);
+    }
     const u = patch?.username;
     const p = patch?.password;
     let best = "";
@@ -1472,11 +1443,7 @@ function CreateModal({
           <>
             {" "}
             认领占位符：<code>{`{{secret:${pendingRow.slug}}}`}</code>
-            {cachedHit
-              ? cachedPair
-                ? "（已自动成对填入上传预扫时的用户名+密码，请核对后提交；提交后两条待认领一并销掉）"
-                : "（已自动填入上传预扫时的命中值，请核对后提交；提交后本机缓存即删除）"
-              : "（服务端从不保存命中原文，本机缓存中也没有该值，请凭记忆填入）"}
+            {claimHintText(Boolean(cachedHit), Boolean(cachedPair))}
           </>
         )}
       </div>
@@ -2042,15 +2009,7 @@ function ViewModal({
               <div className="secret-field" key={f.key}>
                 <span className="sf-label">{f.label}</span>
                 <span className={`sf-value${f.mono ? " mono" : ""}`}>
-                  {f.mask && !f.shown ? (
-                    <span className="sf-masked">••••••••••••</span>
-                  ) : f.link ? (
-                    <a href={f.value} target="_blank" rel="noreferrer">
-                      {f.value}
-                    </a>
-                  ) : (
-                    f.value
-                  )}
+                  {renderFieldValue(f)}
                 </span>
                 <span className="sf-actions">
                   {f.mask && (

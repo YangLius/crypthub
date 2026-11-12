@@ -966,3 +966,14 @@ textarea:not(.astryx-text-area textarea) {
   overscroll-behavior: contain;
   padding-right: 2px;
 }
+
+/* 内联链接式按钮（目录列点击筛选等）——原生 button，替代 role="button" span */
+.linkish-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}

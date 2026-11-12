@@ -140,7 +140,9 @@ export default function App() {
         const prev = localStorage.getItem("kb_build_id");
         localStorage.setItem("kb_build_id", v);
         if (alive && prev && prev !== v) {
-          toast("系统已更新：请按 Ctrl+F5 强制刷新加载新版本（旧标签页仍在跑旧代码）");
+          toast(
+            "系统已更新：请按 Ctrl+F5 强制刷新加载新版本（旧标签页仍在跑旧代码）",
+          );
         }
       } catch {
         // 静默：检测失败不影响使用

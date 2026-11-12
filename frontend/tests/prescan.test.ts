@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildPairMap,
   findPairedHit,
+  pairSlugsFromRedacted,
   peekPrescanHit,
   removePrescanHit,
   savePrescanHits,
@@ -331,5 +333,61 @@ describe("网址线索识别（urlHints）", () => {
     const hints = urlHintsFromRedacted(redacted, ["aaaaaa01", "bbbbbb02"]);
     expect(hints.get("aaaaaa01")).toBe("https://s.example.com");
     expect(hints.get("bbbbbb02")).toBe("https://s.example.com");
+  });
+});
+
+describe("pairSlugsFromRedacted（服务端脱敏文本配对）", () => {
+  it("新格式：相邻「用户名+密码」标签成对，多组互不交叉", () => {
+    const text =
+      "47.109.143.246\n用户名：{{secret:aaaa0001}}\n密码：{{secret:bbbb0002}}\n\n用户名：{{secret:cccc0003}}\n密码：{{secret:dddd0004}}";
+    const m = pairSlugsFromRedacted(text, []);
+    expect(m).toEqual({
+      aaaa0001: "bbbb0002",
+      bbbb0002: "aaaa0001",
+      cccc0003: "dddd0004",
+      dddd0004: "cccc0003",
+    });
+  });
+  it("旧格式（无键名标签）：按出现顺序两两配对", () => {
+    const text =
+      "{{secret:eeee0005}}\n{{secret:ffff0006}}\n{{secret:aaaa0007}}\n{{secret:bbbb0008}}";
+    const m = pairSlugsFromRedacted(text, [
+      "eeee0005",
+      "ffff0006",
+      "aaaa0007",
+      "bbbb0008",
+    ]);
+    expect(m).toEqual({
+      eeee0005: "ffff0006",
+      ffff0006: "eeee0005",
+      aaaa0007: "bbbb0008",
+      bbbb0008: "aaaa0007",
+    });
+  });
+  it("顺序配对时不在文本中的 slug 被过滤", () => {
+    const text = "{{secret:eeee0005}}\n{{secret:ffff0006}}";
+    const m = pairSlugsFromRedacted(text, ["eeee0005", "ffff0006", "dddd0007"]);
+    expect(m).toEqual({ eeee0005: "ffff0006", ffff0006: "eeee0005" });
+  });
+});
+
+describe("buildPairMap（本机缓存配对，无网络回退路径）", () => {
+  it("无 source_doc_id 时仅凭本机缓存返回成对映射", async () => {
+    savePrescanHits(
+      [
+        { slug: "aaaa0001", kind: "kv", value: "root", key: "用户名" },
+        { slug: "bbbb0002", kind: "kv", value: "Xzg2020$", key: "密码" },
+      ],
+      "服务器",
+      "",
+    );
+    const m = await buildPairMap([
+      { slug: "aaaa0001", source_doc_id: null },
+      { slug: "bbbb0002", source_doc_id: null },
+    ]);
+    expect(m["aaaa0001"]).toBe("bbbb0002");
+    expect(m["bbbb0002"]).toBe("aaaa0001");
+    removePrescanHit("aaaa0001");
+    removePrescanHit("bbbb0002");
   });
 });

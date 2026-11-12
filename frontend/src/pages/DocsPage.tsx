@@ -3,8 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { isTextLike, redactAll, scan, type Hit } from "../gates/redact";
-import { savePrescanHits, peekPrescanHit } from "../secrets/prescanCache";
-import { urlHintsFromText } from "../secrets/prescanCache";
+import {
+  buildPairMap,
+  savePrescanHits,
+  peekPrescanHit,
+  urlHintsFromText,
+} from "../secrets/prescanCache";
 import { openSecret, unlockVault, type SecretContent } from "../crypto/flows";
 import { useApp } from "../store";
 import { toast, toastErr } from "../store";
@@ -49,11 +53,37 @@ interface PendingRow {
   source_hint: string;
   status: string;
   doc_title: string | null;
+  source_doc_id: string | null;
 }
 
 export default function DocsPage() {
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [pending, setPending] = useState<PendingRow[]>([]);
+  // 待认领成对合并（与密钥区同一套配对规则：本机缓存 + 服务端脱敏文本结构推断）
+  const [pairMap, setPairMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    void buildPairMap(pending).then((m) => {
+      if (alive) setPairMap(m);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [pending]);
+  const groupedPending = useMemo(() => {
+    const consumed = new Set<string>();
+    const out: { row: PendingRow; pairRow?: PendingRow }[] = [];
+    for (const p of pending) {
+      if (consumed.has(p.id)) continue;
+      const pairedSlug = pairMap[p.slug];
+      const pairRow = pairedSlug
+        ? pending.find((x) => x.slug === pairedSlug && x.id !== p.id)
+        : undefined;
+      if (pairRow) consumed.add(pairRow.id);
+      out.push({ row: p, pairRow });
+    }
+    return out;
+  }, [pending, pairMap]);
   const [q, setQ] = useState("");
   const [project, setProject] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -383,7 +413,7 @@ export default function DocsPage() {
           {pending.length > 0 && (
             <div className="card">
               <h3 style={{ marginTop: 0 }}>
-                待认领的占位符（真实值只在你上传时的浏览器里）
+                待认领的占位符（真实值只在你上传时的浏览器里；成对的用户名+密码已合并为一行）
               </h3>
               <table className="grid">
                 <thead>
@@ -395,13 +425,23 @@ export default function DocsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pending.map((p) => (
+                  {groupedPending.map(({ row: p, pairRow }) => (
                     <tr key={p.id}>
                       <td>
                         <code>{`{{secret:${p.slug}}}`}</code>
+                        {pairRow && (
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {" + "}
+                            <code>{`{{secret:${pairRow.slug}}}`}</code>
+                          </span>
+                        )}
                       </td>
                       <td>
-                        <Badge tone="warn">{p.kind}</Badge>
+                        {pairRow ? (
+                          <Badge tone="info">用户名+密码（成对）</Badge>
+                        ) : (
+                          <Badge tone="warn">{p.kind}</Badge>
+                        )}
                       </td>
                       <td>{p.doc_title ?? p.source_hint}</td>
                       <td>
