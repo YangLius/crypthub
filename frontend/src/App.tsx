@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { TopNav, TopNavItem } from "@astryxdesign/core/TopNav";
 import { api } from "./api/client";
 import { useApp, useToasts } from "./store";
-import { Badge } from "./components/ui";
+import { Badge, Button } from "./components/ui";
+import { RouterLink } from "./router-link";
 import LoginPage from "./pages/LoginPage";
 import SetupPage from "./pages/SetupPage";
 import DocsPage from "./pages/DocsPage";
@@ -55,56 +57,63 @@ function Header() {
     ["/audit", "审计"],
   ] as const;
   return (
-    <header className="topbar">
-      <div className="topbar-brand">🔐 秘枢</div>
-      <nav className="topbar-nav">
-        {navs.map(([to, label]) => (
-          <Link
-            key={to}
-            to={to}
-            className={loc.pathname.startsWith(to) ? "active" : ""}
+    <TopNav
+      label="秘枢主导航"
+      heading={<span className="brand">🔐 秘枢</span>}
+      startContent={
+        <>
+          {navs.map(([to, label]) => (
+            <TopNavItem
+              key={to}
+              as={RouterLink}
+              href={to}
+              label={label}
+              isSelected={loc.pathname.startsWith(to)}
+            />
+          ))}
+          {me.role === "admin" && (
+            <TopNavItem
+              as={RouterLink}
+              href="/admin"
+              label="管理台"
+              isSelected={loc.pathname.startsWith("/admin")}
+            />
+          )}
+        </>
+      }
+      endContent={
+        <>
+          {vault ? (
+            <Badge tone="ok">已解锁</Badge>
+          ) : (
+            <Badge tone="warn">密钥区锁定</Badge>
+          )}
+          <span className="muted">{me.display_name || me.username}</span>
+          {unread > 0 && (
+            <TopNavItem
+              as={RouterLink}
+              href="/audit"
+              label={`🔔${unread}`}
+            />
+          )}
+          <Button
+            kind="ghost"
+            onClick={async () => {
+              if (vault) setVault(null);
+              try {
+                await api.post("/auth/logout");
+              } catch {
+                /* 已失效也无妨 */
+              }
+              useApp.getState().setMe(null);
+              window.location.href = "/login";
+            }}
           >
-            {label}
-          </Link>
-        ))}
-        {me.role === "admin" && (
-          <Link
-            to="/admin"
-            className={loc.pathname.startsWith("/admin") ? "active" : ""}
-          >
-            管理台
-          </Link>
-        )}
-      </nav>
-      <div className="topbar-right">
-        {vault ? (
-          <Badge tone="ok">已解锁</Badge>
-        ) : (
-          <Badge tone="warn">密钥区锁定</Badge>
-        )}
-        <span className="muted">{me.display_name || me.username}</span>
-        {unread > 0 && (
-          <Link to="/audit" className="bell" title={`${unread} 条通知`}>
-            🔔{unread}
-          </Link>
-        )}
-        <button
-          className="btn btn-ghost"
-          onClick={async () => {
-            if (vault) setVault(null);
-            try {
-              await api.post("/auth/logout");
-            } catch {
-              /* 已失效也无妨 */
-            }
-            useApp.getState().setMe(null);
-            window.location.href = "/login";
-          }}
-        >
-          退出
-        </button>
-      </div>
-    </header>
+            退出
+          </Button>
+        </>
+      }
+    />
   );
 }
 

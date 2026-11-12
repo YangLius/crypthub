@@ -2,11 +2,13 @@
  *  系统未初始化时（无任何用户）展示"首次使用"引导：建管理员账号 → /setup。 */
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
+import { Card } from "@astryxdesign/core/Card";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import { api } from "../api/client";
 import { loginProof } from "../crypto/flows";
 import { b64d, hmacHex, unhex } from "../crypto/core";
 import { useApp } from "../store";
-import { Button, Field, SecretHint } from "../components/ui";
+import { Button, SecretHint, Spinner } from "../components/ui";
 
 export default function LoginPage() {
   const nav = useNavigate();
@@ -32,6 +34,7 @@ export default function LoginPage() {
   if (me) return <Navigate to="/docs" replace />;
 
   const submit = async () => {
+    if (busy) return;
     setErr("");
     if (!username || !mp) {
       setErr("请输入用户名与主密码");
@@ -85,9 +88,9 @@ export default function LoginPage() {
   if (needsBootstrap === null) {
     return (
       <div className="auth-wrap">
-        <div className="card auth-card">
-          <p className="auth-sub">正在连接服务…</p>
-        </div>
+        <Card width={430}>
+          <Spinner text="正在连接服务…" />
+        </Card>
       </div>
     );
   }
@@ -96,70 +99,66 @@ export default function LoginPage() {
   if (needsBootstrap) {
     return (
       <div className="auth-wrap">
-        <div className="card auth-card">
+        <Card width={430}>
           <h2 className="auth-title">🚀 系统尚未初始化</h2>
           <p className="auth-sub">
             这是首次使用：创建第一个管理员账号并设置主密码，
             系统将同时生成组织恢复密钥。
           </p>
-          <Field label="管理员用户名">
-            <input
-              type="text"
+          <div className="auth-form">
+            <TextInput
+              label="管理员用户名"
               value={adminName}
-              onChange={(e) => setAdminName(e.target.value)}
+              onChange={setAdminName}
               placeholder="admin"
             />
-          </Field>
-          <Field label="显示名">
-            <input
-              type="text"
+            <TextInput
+              label="显示名"
               value={adminDisplayName}
-              onChange={(e) => setAdminDisplayName(e.target.value)}
+              onChange={setAdminDisplayName}
             />
-          </Field>
-          {bootErr && <SecretHint>{bootErr}</SecretHint>}
-          <Button
-            kind="primary"
-            disabled={bootBusy}
-            onClick={() => void bootstrap()}
-          >
-            {bootBusy ? "创建中…" : "初始化系统（进入主密码设置）"}
-          </Button>
-        </div>
+            {bootErr && <SecretHint>{bootErr}</SecretHint>}
+            <Button
+              kind="primary"
+              disabled={bootBusy}
+              onClick={() => void bootstrap()}
+            >
+              {bootBusy ? "创建中…" : "初始化系统（进入主密码设置）"}
+            </Button>
+          </div>
+        </Card>
       </div>
     );
   }
 
   return (
     <div className="auth-wrap">
-      <div className="card auth-card">
+      <Card width={430}>
         <h2 className="auth-title">🔐 秘枢</h2>
         <p className="auth-sub">公司内部系统 · 零知识架构：主密码不离开本机</p>
         <form
+          className="auth-form"
           onSubmit={(e) => {
             e.preventDefault();
             void submit();
           }}
         >
-          <Field label="用户名">
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
-            />
-          </Field>
-          <Field
+          <TextInput
+            label="用户名"
+            value={username}
+            onChange={setUsername}
+            placeholder="username"
+            autoComplete="username"
+          />
+          <TextInput
             label="主密码"
-            hint="登录（验证身份）与解锁密钥区（读取数据）是两个独立动作"
-          >
-            <input
-              type="password"
-              value={mp}
-              onChange={(e) => setMp(e.target.value)}
-              placeholder="主密码"
-            />
-          </Field>
+            type="password"
+            value={mp}
+            onChange={setMp}
+            placeholder="主密码"
+            autoComplete="current-password"
+            description="登录（验证身份）与解锁密钥区（读取数据）是两个独立动作"
+          />
           {err && <SecretHint>{err}</SecretHint>}
           <Button
             type="submit"
@@ -170,7 +169,7 @@ export default function LoginPage() {
             {busy ? "派生密钥中（约 1 秒）…" : "登录"}
           </Button>
         </form>
-      </div>
+      </Card>
     </div>
   );
 }

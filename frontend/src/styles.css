@@ -760,3 +760,24 @@ textarea {
   width: 1px;
   background: var(--line, #e3e6ea);
 }
+
+/* ===== Astryx 迁移期补充（组件本身来自 @astryxdesign/core，以下仅为局部布局辅助） ===== */
+.brand {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+.center-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 0;
+}

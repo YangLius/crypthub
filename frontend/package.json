@@ -10,23 +10,29 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.7.14",
+    "@astryxdesign/theme-neutral": "^0.7.14",
     "@noble/ciphers": "^1.2.1",
     "@noble/curves": "^1.6.0",
     "@noble/hashes": "^1.5.0",
     "hash-wasm": "^4.11.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-router-dom": "^6.26.2",
     "xlsx": "^0.18.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.7.14",
     "@types/node": "^26.6.6",
-    "@types/react": "^18.3.10",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.3.2",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
     "vitest": "^2.1.2"
+  },
+  "allowScripts": {
+    "@astryxdesign/core@0.7.14": true
   }
 }
