@@ -12,6 +12,7 @@ import {
   Empty,
   Field,
   Modal,
+  SecretHint,
   Spinner,
   StatusBadge,
 } from "../components/ui";
@@ -64,6 +65,7 @@ export default function DocsPage() {
   }>(null);
   const [editing, setEditing] = useState<Doc | null>(null);
   const [moving, setMoving] = useState<Doc | null>(null);
+  const [viewing, setViewing] = useState<Doc | null>(null);
 
   // 上传向导状态
   const [scanning, setScanning] = useState<{
@@ -296,6 +298,15 @@ export default function DocsPage() {
                         {d.secret_ref ? <Badge tone="info">已关联</Badge> : "—"}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
+                        {d.status === "ready" && (
+                          <Button
+                            kind="ghost"
+                            title="在线查看正文（已脱敏安全文本）"
+                            onClick={() => setViewing(d)}
+                          >
+                            查看
+                          </Button>
+                        )}
                         <Button
                           kind="ghost"
                           title="重新解析建索引"
@@ -486,6 +497,9 @@ export default function DocsPage() {
               }}
             />
           )}
+          {viewing && (
+            <ViewDocModal doc={viewing} onClose={() => setViewing(null)} />
+          )}
         </div>
       </div>
     </div>
@@ -544,6 +558,50 @@ function EditDocModal({
       >
         保存
       </Button>
+    </Modal>
+  );
+}
+
+/** 在线查看文档正文：由索引分块拼接的已脱敏安全文本，非原始文件下载。 */
+function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
+  const [data, setData] = useState<{
+    text: string;
+    truncated: boolean;
+    chunk_count: number;
+  } | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get<{
+        text: string;
+        truncated: boolean;
+        chunk_count: number;
+      }>(`/documents/${doc.id}/view`)
+      .then((r) => {
+        if (alive) setData(r);
+      })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : "读取失败");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [doc.id]);
+
+  return (
+    <Modal title={`查看 · ${doc.title}`} onClose={onClose} wide>
+      {err && <SecretHint>{err}</SecretHint>}
+      {!err && !data && <Spinner text="加载正文…" />}
+      {data && (
+        <div className="doc-view">
+          {data.truncated && (
+            <SecretHint>内容过长，仅显示前 50 万字符。</SecretHint>
+          )}
+          <pre className="doc-view-text">{data.text}</pre>
+        </div>
+      )}
     </Modal>
   );
 }

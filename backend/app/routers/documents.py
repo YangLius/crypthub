@@ -217,6 +217,44 @@ async def get_redacted_text(doc_id: str, request: Request):
     }
 
 
+@router.get("/{doc_id}/view")
+async def view_document(doc_id: str, request: Request):
+    """在线查看文档正文（已索引的安全文本，非原始文件下载）。
+
+    正文由索引分块按序拼接：PDF/DOCX 是解析后的文本，.md/.txt 是入库前
+    已脱敏（服务端门禁或客户端预扫）的文本，均不含凭据原文，可安全展示。
+    """
+    await current_user(request)
+    d = await db.fetch_one(
+        "SELECT id, title, status, error, chunk_count FROM documents WHERE id = :id",
+        {"id": doc_id},
+    )
+    if not d:
+        raise HTTPException(404, "文档不存在")
+    if d["status"] == "processing":
+        raise HTTPException(409, "文档正在索引中，请稍后再试")
+    if d["status"] == "failed":
+        raise HTTPException(409, f"文档索引失败：{d['error'] or '未知原因'}")
+    rows = await db.fetch_all(
+        "SELECT text FROM chunks WHERE document_id = :id ORDER BY idx",
+        {"id": doc_id},
+    )
+    if not rows:
+        raise HTTPException(404, "文档暂无可展示的正文")
+    text = "\n\n".join(r["text"] for r in rows)
+    truncated = False
+    if len(text) > 500_000:
+        text = text[:500_000]
+        truncated = True
+    return {
+        "id": d["id"],
+        "title": d["title"],
+        "chunk_count": d["chunk_count"],
+        "text": text,
+        "truncated": truncated,
+    }
+
+
 @router.patch("/{doc_id}")
 async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
     ctx: Ctx = await current_user(request)

@@ -9,7 +9,11 @@ export function RouterLink(props: {
   style?: CSSProperties;
 }) {
   return (
-    <Link to={props.href ?? "/"} className={props.className} style={props.style}>
+    <Link
+      to={props.href ?? "/"}
+      className={props.className}
+      style={props.style}
+    >
       {props.children}
     </Link>
   );

@@ -90,11 +90,7 @@ function Header() {
           )}
           <span className="muted">{me.display_name || me.username}</span>
           {unread > 0 && (
-            <TopNavItem
-              as={RouterLink}
-              href="/audit"
-              label={`🔔${unread}`}
-            />
+            <TopNavItem as={RouterLink} href="/audit" label={`🔔${unread}`} />
           )}
           <Button
             kind="ghost"

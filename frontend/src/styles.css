@@ -150,11 +150,13 @@ table.grid tr:hover td {
   font-size: 12px;
   color: var(--muted);
 }
-input[type="text"],
-input[type="password"],
-input[type="url"],
-textarea,
-select {
+/* 旧全局表单样式：排除 Astryx 控件内部的原生输入框（astryx 运行时注入样式自管，
+   否则会盖出“外框+内框”两层边框） */
+input[type="text"]:not(.astryx-text-input input),
+input[type="password"]:not(.astryx-text-input input),
+input[type="url"]:not(.astryx-text-input input),
+textarea:not(.astryx-text-area textarea),
+select:not(.astryx-select select) {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
@@ -163,13 +165,13 @@ select {
   background: #fff;
   color: var(--text);
 }
-input:focus,
-textarea:focus,
-select:focus {
+input:focus:not(.astryx-text-input input),
+textarea:focus:not(.astryx-text-area textarea),
+select:focus:not(.astryx-select select) {
   outline: 2px solid var(--brand-weak);
   border-color: var(--brand);
 }
-textarea {
+textarea:not(.astryx-text-area textarea) {
   resize: vertical;
   min-height: 90px;
 }
@@ -780,4 +782,22 @@ textarea {
   justify-content: center;
   gap: 10px;
   padding: 24px 0;
+}
+.doc-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.doc-view-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
 }

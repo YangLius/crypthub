@@ -15,11 +15,14 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 
 /** ReactNode → 纯文本（用作 Astryx Button 的无障碍 label）。 */
 function flattenText(node: ReactNode): string {
-  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (node === null || node === undefined || typeof node === "boolean")
+    return "";
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(flattenText).join("");
   if (typeof node === "object" && "props" in (node as never)) {
-    return flattenText((node as { props: { children?: ReactNode } }).props?.children);
+    return flattenText(
+      (node as { props: { children?: ReactNode } }).props?.children,
+    );
   }
   return "";
 }
