@@ -917,6 +917,10 @@ async def _fetch_parse(since: str = "daily") -> list[dict]:
         md = re.search(r"<p[^>]*>(.*?)</p>", chunk, re.S)
         if md:
             desc = _clean(md.group(1))[:300]
+            # 新版 trending 页面的 <p> 可能携带 Star 按钮文案前缀（Star owner/repo ...）
+            desc = re.sub(
+                rf"^\s*Star\s+{re.escape(full_name)}\s*", "", desc, flags=re.I
+            ).strip()
 
         lang = ""
         ml = re.search(r'itemprop="programmingLanguage">\s*([^<]+)<', chunk)

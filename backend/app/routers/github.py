@@ -1,9 +1,11 @@
 """GitHub 热点路由：查看每日 trending（两级分类全量）与归档到文档区。
 
 归档规则（2026-11-12 v2）：
-- 请求体 {full_names: ["owner/repo", ...]}：单项目=1 个元素，批量=多个（即页面勾选）。
+- 请求体 {full_names: ["owner/repo", ...], lang: "zh"|"en"}：单项目=1 个元素，批量=多个。
 - 每个项目按其当日分类落盘：文档区 GitHub/<父分类>[/<子分类>]，目录不存在自动创建。
-- 文档标题《GitHub 项目 · owner/repo · 日期》，同日同项目重复归档=原地更新并重建索引。
+- 文档标题《GitHub 项目 · owner/repo · 中文/EN》（不含日期），同项目同语言全库唯一，
+  重复整理=原地更新并重建索引。
+- README 抓取 + LLM 提炼生成 用途/使用方法 内容；失败降级为原文摘录并记日志。
 - 走正常 worker 分块 + 嵌入管线，归档后即可被检索 / AI 问答引用。
 """
 
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +22,8 @@ from pydantic import BaseModel, Field
 from .. import audit, db, gates, llm, queue, storage, trending
 from ..config import settings
 from ..security import Ctx, current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -47,8 +52,25 @@ class ArchiveBody(BaseModel):
     lang: str = Field("zh", pattern="^(zh|en)$")
 
 
+_RAW_README_CANDIDATES = (
+    "README.md",
+    "readme.md",
+    "README.zh-CN.md",
+    "README.en.md",
+    "README.rst",
+    "README.markdown",
+    "README.txt",
+    "README",
+)
+
+
 async def _fetch_readme(full_name: str) -> str | None:
-    """抓取仓库 README 原文（GitHub API raw 格式）；失败/限速返回 None 走降级。"""
+    """抓取仓库 README 原文；失败返回 None 走降级（不阻塞归档）。
+
+    优先 GitHub API（配置 GITHUB_TOKEN 后 5000 次/小时）；匿名 API 只有
+    60 次/小时/IP，容易用光（403）。因此无 token 或 API 失败时改走
+    raw.githubusercontent.com（CDN 分发，不占 API 限额），多候选文件名兜底。
+    """
     headers = {"Accept": "application/vnd.github.raw+json"}
     if settings.github_token:
         headers["Authorization"] = f"Bearer {settings.github_token}"
@@ -58,12 +80,29 @@ async def _fetch_readme(full_name: str) -> str | None:
                 f"https://api.github.com/repos/{full_name}/readme",
                 headers=headers,
             )
-        if resp.status_code != 200 or not resp.content:
-            return None
-        text = resp.content.decode("utf-8", errors="replace")
-        return text if len(text) > 80 else None  # 过短视为无有效 README
-    except Exception:
-        return None
+        if resp.status_code == 200 and len(resp.content) > 80:
+            return resp.content.decode("utf-8", errors="replace")
+        logger.warning(
+            "README API 获取失败 %s：status=%s%s，改走 raw 回退",
+            full_name,
+            resp.status_code,
+            "（匿名限额用尽）" if resp.status_code in (403, 429) else "",
+        )
+    except Exception as e:
+        logger.warning("README API 请求异常 %s：%s，改走 raw 回退", full_name, e)
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        for name in _RAW_README_CANDIDATES:
+            try:
+                r = await client.get(
+                    f"https://raw.githubusercontent.com/{full_name}/HEAD/{name}"
+                )
+            except Exception as e:
+                logger.warning("README raw 请求异常 %s/%s：%s", full_name, name, e)
+                return None
+            if r.status_code == 200 and len(r.content) > 80:
+                return r.content.decode("utf-8", errors="replace")
+    logger.warning("README raw 全部候选未命中 %s（可能确实无 README）", full_name)
+    return None
 
 
 async def _ensure_doc_folder(name: str, parent_id: str | None) -> str:
@@ -134,10 +173,16 @@ def _render_repo_md(
         "",
     ]
     # 中文文档有 LLM 摘要时：摘要自带中文「简介」（官方英文描述已被翻译），
-    # 不再重复原样英文描述；英文文档/降级场景保留官方原描述段。
+    # 不再重复原样英文描述；英文文档保留官方 Description 段。
     if not (summary is not None and not en):
+        # 中文降级场景明确标注「官方描述原文」，不冒充翻译后的简介
+        desc_heading = (
+            "Description"
+            if en
+            else ("简介" if summary is not None else "官方描述（原文，未翻译）")
+        )
         head += [
-            f"## {('Description' if en else '简介')}",
+            f"## {desc_heading}",
             "",
             repo["desc"] or ("(no description)" if en else "（无描述）"),
             "",
@@ -263,18 +308,25 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
             folder_id = await _ensure_doc_folder(hit["sub_label"], folder_id)
             path_parts.append(hit["sub_label"])
 
-        # README 抓取 + LLM 提炼（失败降级为原文摘录，不阻塞归档）
+        # README 抓取 + LLM 提炼（失败重试一次，仍败降级为原文摘录并记日志，不阻塞归档）
         readme = await _fetch_readme(fn)
         summary: str | None = None
         if readme:
-            try:
-                summary = await llm.summarize_readme(
-                    readme, lang=body.lang, desc=repo.get("desc") or ""
-                )
-                # 提炼内容过一遍脱敏门禁（防 README 示例里的真实凭据被原样带出）
-                summary = gates.redact(summary, strict=True).text
-            except Exception:
-                summary = None
+            for attempt in (1, 2):
+                try:
+                    summary = await llm.summarize_readme(
+                        readme, lang=body.lang, desc=repo.get("desc") or ""
+                    )
+                    # 提炼内容过一遍脱敏门禁（防 README 示例里的真实凭据被原样带出）
+                    summary = gates.redact(summary, strict=True).text
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "README 提炼失败 %s（第 %s/2 次）：%s", fn, attempt, e
+                    )
+                    summary = None
+                    if attempt == 1:
+                        await asyncio.sleep(2)
 
         # 标题不含日期：同项目同语言永远只有一篇，重复整理=原地更新（日期只在正文里）
         title = f"GitHub 项目 · {fn} · {lang_suffix}"
