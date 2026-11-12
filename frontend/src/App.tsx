@@ -8,6 +8,7 @@ import SetupPage from "./pages/SetupPage";
 import DocsPage from "./pages/DocsPage";
 import ChatPage from "./pages/ChatPage";
 import SearchPage from "./pages/SearchPage";
+import GitHubPage from "./pages/GitHubPage";
 import SecretsPage from "./pages/SecretsPage";
 import AdminPage from "./pages/AdminPage";
 import AuditPage from "./pages/AuditPage";
@@ -50,6 +51,7 @@ function Header() {
     ["/secrets", "密钥区"],
     ["/chat", "AI 问答"],
     ["/search", "检索"],
+    ["/github", "GitHub"],
     ["/audit", "审计"],
   ] as const;
   return (
@@ -172,6 +174,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <AdminPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/github"
+            element={
+              <RequireAuth>
+                <GitHubPage />
               </RequireAuth>
             }
           />

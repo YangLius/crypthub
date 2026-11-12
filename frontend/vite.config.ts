@@ -8,6 +8,7 @@ const proxied = [
   "/admin",
   "/documents",
   "/search",
+  "/github",
   "/chat",
   "/secrets",
   "/audit",

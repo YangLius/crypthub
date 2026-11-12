@@ -19,6 +19,7 @@ from .routers import (
     dify,
     documents,
     folders,
+    github,
     search,
     secrets,
     sysconfig,
@@ -46,6 +47,7 @@ _FRONTEND_ROUTES = {
     "/secrets",
     "/admin",
     "/audit",
+    "/github",
 }
 
 
@@ -68,6 +70,7 @@ app.include_router(sysconfig.router)
 app.include_router(documents.router)
 app.include_router(folders.router)
 app.include_router(search.router)
+app.include_router(github.router)
 app.include_router(chat.router)
 app.include_router(secrets.router)
 app.include_router(audit_router.router)

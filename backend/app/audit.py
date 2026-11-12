@@ -45,6 +45,7 @@ ACTIONS = {
   "system_config_revealed",
   "system_config_updated",
   "system_config_db_updated",
+  "gh_archive_created",
 }
 
 
