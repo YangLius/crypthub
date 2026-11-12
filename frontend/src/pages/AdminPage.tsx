@@ -8,6 +8,7 @@ import {
   type SecretContent,
 } from "../crypto/flows";
 import { toast, toastErr, useApp } from "../store";
+import { SysConfigPanel } from "../components/SysConfigPanel";
 import {
   Badge,
   Button,
@@ -46,7 +47,7 @@ interface RecoveryEntry {
   grantees: { user_id: string; username: string }[];
 }
 
-type Tab = "users" | "groups" | "recovery";
+type Tab = "users" | "groups" | "recovery" | "sysconfig";
 
 export default function AdminPage() {
   const { me } = useApp();
@@ -59,7 +60,7 @@ export default function AdminPage() {
       <div className="page-head">
         <h2>管理台</h2>
         <div className="toolbar" style={{ marginBottom: 0 }}>
-          {(["users", "groups", "recovery"] as Tab[]).map((t) => (
+          {(["users", "groups", "recovery", "sysconfig"] as Tab[]).map((t) => (
             <Button
               key={t}
               kind={tab === t ? "primary" : "default"}
@@ -70,6 +71,7 @@ export default function AdminPage() {
                   users: "用户与开号",
                   groups: "组",
                   recovery: "组织恢复 / 交接",
+                  sysconfig: "系统设置",
                 }[t]
               }
             </Button>
@@ -79,6 +81,7 @@ export default function AdminPage() {
       {tab === "users" && <UsersPanel />}
       {tab === "groups" && <GroupsPanel />}
       {tab === "recovery" && <RecoveryPanel />}
+      {tab === "sysconfig" && <SysConfigPanel />}
     </div>
   );
 }

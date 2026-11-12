@@ -27,7 +27,9 @@ async def chat(question: str, contexts: list[dict]) -> str:
     key = cfg["llm_api_key"] or ""
     model = cfg["llm_model"] or ""
     if not (base and key and model):
-        raise RuntimeError("LLM 未配置：请在密钥区 · 系统配置中填写 Base URL / API Key / 模型")
+        raise RuntimeError(
+            "LLM 未配置：请在密钥区 · 系统配置中填写 Base URL / API Key / 模型"
+        )
     blocks = []
     for i, c in enumerate(contexts, 1):
         blocks.append(f"[{i}] 《{c['title']}》 · {c['anchor']}\n{c['text']}")

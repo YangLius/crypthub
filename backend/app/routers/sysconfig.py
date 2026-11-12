@@ -121,13 +121,13 @@ async def update_config(body: UpdateBody, ctx: Ctx = Depends(admin_ctx)) -> dict
         if k not in UPDATABLE:
             raise HTTPException(400, f"不允许修改字段：{k}")
         if k == "embedding_provider" and v not in sysconfig.PROVIDERS:
-            raise HTTPException(400, f"provider 仅支持：{' / '.join(sysconfig.PROVIDERS)}")
+            raise HTTPException(
+                400, f"provider 仅支持：{' / '.join(sysconfig.PROVIDERS)}"
+            )
         if k == "embedding_api_send_dims" and v not in ("true", "false"):
             raise HTTPException(400, "send_dims 仅支持 true/false")
         if v == "":  # 空串=删除覆盖，恢复 .env 默认
-            await db.execute(
-                "DELETE FROM system_settings WHERE key = :k", {"k": k}
-            )
+            await db.execute("DELETE FROM system_settings WHERE key = :k", {"k": k})
         else:
             await db.execute(
                 "INSERT INTO system_settings (key, value, updated_by)"
@@ -144,7 +144,10 @@ async def update_config(body: UpdateBody, ctx: Ctx = Depends(admin_ctx)) -> dict
         ip=ctx.ip,
         detail={"keys": sorted(changed.keys())},
     )
-    return {"changed": changed, "note": "即时生效（LLM/嵌入）；嵌入模型变更后需重建索引"}
+    return {
+        "changed": changed,
+        "note": "即时生效（LLM/嵌入）；嵌入模型变更后需重建索引",
+    }
 
 
 # ---------- 连通性测试 ----------
@@ -277,7 +280,9 @@ async def update_db(body: DbBody, ctx: Ctx = Depends(admin_ctx)) -> dict:
         await _try_db_connect(body)
     except Exception as e:
         raise HTTPException(400, f"{e}") from None
-    url = sysconfig.build_db_url(body.host, body.port, body.user, body.password, body.name)
+    url = sysconfig.build_db_url(
+        body.host, body.port, body.user, body.password, body.name
+    )
     try:
         path = sysconfig.write_env_database_url(url)
     except Exception as e:
@@ -286,7 +291,12 @@ async def update_db(body: DbBody, ctx: Ctx = Depends(admin_ctx)) -> dict:
         "system_config_db_updated",
         user=ctx.user,
         ip=ctx.ip,
-        detail={"host": body.host, "port": body.port, "name": body.name, "user": body.user},
+        detail={
+            "host": body.host,
+            "port": body.port,
+            "name": body.name,
+            "user": body.user,
+        },
         severity="alert",
     )
     return {"ok": True, "note": f"已写入 {path}，重启后端后生效"}

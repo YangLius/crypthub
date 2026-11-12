@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { toast, toastErr } from "../store";
-import { Button, ConfirmModal, Field } from "../components/ui";
+import { Button, ConfirmModal, Field } from "./ui";
 
 interface SysCfg {
   llm: {
@@ -70,7 +70,13 @@ export function SysConfigPanel() {
 
 /* ---------- 大模型 ---------- */
 
-function LlmSection({ cfg, onChanged }: { cfg: SysCfg; onChanged: () => void }) {
+function LlmSection({
+  cfg,
+  onChanged,
+}: {
+  cfg: SysCfg;
+  onChanged: () => void;
+}) {
   const [base, setBase] = useState(cfg.llm.api_base);
   const [model, setModel] = useState(cfg.llm.model);
   const [key, setKey] = useState("");
@@ -205,8 +211,10 @@ function EmbeddingSection({
     setBusy("save");
     try {
       const body: Record<string, string> = {};
-      if (provider !== cfg.embedding.provider) body.embedding_provider = provider;
-      if (base !== cfg.embedding.api_base) body.embedding_api_base = base.trim();
+      if (provider !== cfg.embedding.provider)
+        body.embedding_provider = provider;
+      if (base !== cfg.embedding.api_base)
+        body.embedding_api_base = base.trim();
       if (model !== cfg.embedding.model) body.embedding_model = model.trim();
       if (key.trim()) body.embedding_api_key = key.trim();
       if (sendDims !== cfg.embedding.send_dims)
@@ -272,7 +280,8 @@ function EmbeddingSection({
       <h4 style={{ margin: "0 0 8px" }}>
         向量嵌入（文档索引）{" "}
         <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
-          Key 来源：{cfg.embedding.api_key_source === "db" ? "界面配置" : ".env 默认"}
+          Key 来源：
+          {cfg.embedding.api_key_source === "db" ? "界面配置" : ".env 默认"}
         </span>
       </h4>
       <Field label="Provider">
@@ -310,7 +319,9 @@ function EmbeddingSection({
               <Button onClick={() => void reveal()}>查看明文</Button>
             </div>
           </Field>
-          <label style={{ display: "block", margin: "4px 0 8px", fontSize: 13 }}>
+          <label
+            style={{ display: "block", margin: "4px 0 8px", fontSize: 13 }}
+          >
             <input
               type="checkbox"
               checked={sendDims}
