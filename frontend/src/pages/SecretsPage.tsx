@@ -344,6 +344,24 @@ function SecretList(props: {
     }
     return [...m.entries()];
   }, [pending]);
+
+  // 成对分组：同一组“用户名+密码”的两条占位符合并为一行展示；
+  // 接管一次创建一条密钥，提交后两行一并销掉（CreateModal 内已处理双回填/双认领）
+  const groupedPending = useMemo(() => {
+    const consumed = new Set<string>();
+    const out: { row: PendingRow; pairRow?: PendingRow }[] = [];
+    for (const p of pending) {
+      if (consumed.has(p.id)) continue;
+      const hit = peekPrescanHit(p.slug);
+      const pairHit = hit ? findPairedHit(p.slug) : null;
+      const pairRow = pairHit
+        ? pending.find((x) => x.slug === pairHit.slug && x.id !== p.id)
+        : undefined;
+      if (pairRow) consumed.add(pairRow.id);
+      out.push({ row: p, pairRow });
+    }
+    return out;
+  }, [pending]);
   const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState<SecretFull | null>(null);
   const [moving, setMoving] = useState<SecretRow | null>(null);
@@ -511,7 +529,7 @@ function SecretList(props: {
           }}
         >
           <h4 style={{ margin: "0 0 8px" }}>
-            待认领占位符（预扫产生；认领时自动回填本机记录的命中值）
+            待认领占位符（预扫产生；认领时自动回填本机记录的命中值；成对的用户名+密码已合并为一行）
           </h4>
           {docGroups.length > 0 && (
             <div
@@ -546,18 +564,31 @@ function SecretList(props: {
               </tr>
             </thead>
             <tbody>
-              {pending.map((p) => (
+              {groupedPending.map(({ row: p, pairRow }) => (
                 <tr key={p.id}>
                   <td>
                     <code>{`{{secret:${p.slug}}}`}</code>
+                    {pairRow && (
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        + <code>{`{{secret:${pairRow.slug}}}`}</code>
+                      </div>
+                    )}
                   </td>
                   <td>
-                    <Badge tone="warn">{p.kind}</Badge>
+                    {pairRow ? (
+                      <Badge tone="info">用户名+密码（成对）</Badge>
+                    ) : (
+                      <Badge tone="warn">{p.kind}</Badge>
+                    )}
                   </td>
                   <td>{p.doc_title ?? p.source_hint}</td>
                   <td>
                     <Button
-                      title="创建条目后把占位符归属到它"
+                      title={
+                        pairRow
+                          ? "创建一条密钥同时填入用户名+密码，两条占位符一并归属"
+                          : "创建条目后把占位符归属到它"
+                      }
                       onClick={() => setCreating({ row: p })}
                     >
                       新建并认领
@@ -566,10 +597,19 @@ function SecretList(props: {
                       kind="ghost"
                       onClick={async () => {
                         await api.post(`/secrets/pending/${p.id}/dismiss`);
-                        onPendingChange(pending.filter((x) => x.id !== p.id));
+                        if (pairRow)
+                          await api.post(
+                            `/secrets/pending/${pairRow.id}/dismiss`,
+                          );
+                        const drop = new Set(
+                          [p.id, pairRow?.id].filter(Boolean) as string[],
+                        );
+                        onPendingChange(
+                          pending.filter((x) => !drop.has(x.id)),
+                        );
                       }}
                     >
-                      忽略
+                      {pairRow ? "忽略（两条）" : "忽略"}
                     </Button>
                   </td>
                 </tr>
