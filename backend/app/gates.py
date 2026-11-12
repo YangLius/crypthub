@@ -63,6 +63,8 @@ class Hit:
     start: int
     end: int
     value: str  # 命中原文（仅存于调用方内存，绝不入库/入日志）
+    key: str = ""  # 仅 kv：键名标签（如 用户名/密码），用于字段归类
+    pre: str = ""  # 仅 kv：替换时保留的前缀（键名+分隔符），脱敏文本可读
 
 
 @dataclass
@@ -126,10 +128,21 @@ def scan(text: str, *, strict: bool = True) -> list[Hit]:
             hits.append(Hit("connstr", m.start(), m.end(), m.group(0)))
             taken.append((m.start(), m.end()))
 
-    # 2) 键值对
+    # 2) 键值对：value 只取捕获组（纯凭据值），键名+分隔符存 pre 供替换时保留
     for m in _RE_KV.finditer(text):
         if not overlaps(m.start(), m.end()):
-            hits.append(Hit("kv", m.start(), m.end(), m.group(0)))
+            val = m.group(1)
+            pre = m.group(0)[: -len(val)]
+            hits.append(
+                Hit(
+                    "kv",
+                    m.start(),
+                    m.end(),
+                    val,
+                    key=re.sub(r"\s*[:：=＝]\s*$", "", pre).strip(),
+                    pre=pre,
+                )
+            )
             taken.append((m.start(), m.end()))
 
     # 3) token 候选：前缀 + 高熵
@@ -177,7 +190,8 @@ def redact(text: str, *, strict: bool = True) -> RedactResult:
         while slug in used_slugs:  # 极小概率碰撞
             slug = pysecrets.token_hex(4)
         used_slugs.add(slug)
-        out.append(PLACEHOLDER_PREFIX + slug + PLACEHOLDER_SUFFIX)
+        # kv 命中保留「键名+分隔符」前缀：占位符只替换值，脱敏文本保持可读
+        out.append(h.pre + PLACEHOLDER_PREFIX + slug + PLACEHOLDER_SUFFIX)
         pending.append({"slug": slug, "kind": h.kind, "length": h.end - h.start})
         pos = h.end
     out.append(text[pos:])

@@ -8,6 +8,10 @@ export interface Hit {
   start: number;
   end: number;
   value: string; // 只在内存，绝不入库/入日志
+  /** 仅 kv：键名标签（如 用户名/密码），用于字段归类 */
+  key?: string;
+  /** 仅 kv：替换时要保留的前缀（键名+分隔符），脱敏文本可读 */
+  pre?: string;
 }
 
 export interface PendingItem {
@@ -109,11 +113,15 @@ export function scan(text: string): Hit[] {
   }
   for (const m of text.matchAll(RE_KV)) {
     if (!overlaps(m.index, m.index + m[0].length)) {
+      const kvVal = m[1];
+      const kvPre = m[0].slice(0, m[0].length - kvVal.length);
       hits.push({
         kind: "kv",
         start: m.index,
         end: m.index + m[0].length,
-        value: m[0],
+        value: kvVal,
+        key: kvPre.replace(/\s*[:：=＝]\s*$/, "").trim(),
+        pre: kvPre,
       });
       taken.push([m.index, m.index + m[0].length]);
     }
@@ -173,7 +181,9 @@ export function redactAll(text: string): RedactResult {
   for (const h of hits) {
     out.push(text.slice(pos, h.start));
     const slug = randomSlug();
-    out.push("{{secret:" + slug + "}}");
+    // kv 命中保留「键名+分隔符」前缀：占位符只替换值，脱敏文本保持可读，
+    // 回显/认领时也能从上下文推断字段
+    out.push((h.pre ?? "") + "{{secret:" + slug + "}}");
     pending.push({ slug, kind: h.kind });
     resolved.push({ slug, kind: h.kind, value: h.value });
     pos = h.end;

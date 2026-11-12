@@ -684,9 +684,7 @@ function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
     if (!data) return [] as string[];
     return [
       ...new Set(
-        [...data.text.matchAll(/\{\{secret:([0-9a-f]+)\}\}/g)].map(
-          (m) => m[1],
-        ),
+        [...data.text.matchAll(/\{\{secret:([0-9a-f]+)\}\}/g)].map((m) => m[1]),
       ),
     ];
   }, [data]);
@@ -738,9 +736,24 @@ function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
               sid,
               me.user_id,
             );
-            for (const s of slugs) {
+            // 旧版文档的占位符吃掉了行内标签，无法从上下文推断字段——
+            // 按「用户名在前、密码在后」的配对顺序兜底
+            const ordered = [...slugs].sort(
+              (a, b) =>
+                data.text.indexOf(`{{secret:${a}}}`) -
+                data.text.indexOf(`{{secret:${b}}}`),
+            );
+            for (const s of ordered) {
               const at = data.text.indexOf(`{{secret:${s}}}`);
-              const field = fieldFromContext(data.text, at);
+              let field = fieldFromContext(data.text, at);
+              if (
+                !field &&
+                ordered.length >= 2 &&
+                content.username &&
+                content.password
+              ) {
+                field = s === ordered[0] ? "username" : "password";
+              }
               const v = pickValue(content, field);
               if (v) {
                 vals[s] = v;
@@ -859,7 +872,8 @@ function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
               )}
               {resolvedCount > 0 && resolvedCount < phSlugs.length && (
                 <span className="muted" style={{ fontSize: 12 }}>
-                  {phSlugs.length - resolvedCount} 处未认领或本机无缓存，保持占位符
+                  {phSlugs.length - resolvedCount}{" "}
+                  处未认领或本机无缓存，保持占位符
                 </span>
               )}
             </div>

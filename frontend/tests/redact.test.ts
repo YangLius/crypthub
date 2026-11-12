@@ -140,4 +140,21 @@ describe("中文键名规则（与 test_gates.py 同源）", () => {
     const rd = redactAll("用户名：user1；密码：pass1234");
     expect(rd.hits.filter((h) => h.kind === "kv").length).toBe(2);
   });
+  it("kv 脱敏保留键名标签，只替换值；key/value 供字段归类（与 test_gates.py 同源）", () => {
+    const rd = redactAll(
+      "47.109.143.246\n用户名：root\n密码：Xzg2020$\n\n用户名：deploy\n密码：Xzg2020$",
+    );
+    expect(rd.hits.filter((h) => h.kind === "kv").length).toBe(4);
+    expect(rd.text.match(/用户名：/g)?.length).toBe(2);
+    expect(rd.text.match(/密码：/g)?.length).toBe(2);
+    expect(rd.text).not.toContain("root");
+    expect(rd.text).not.toContain("Xzg2020$");
+    const kv = rd.hits.filter((h) => h.kind === "kv");
+    expect(kv.map((h) => h.key)).toEqual(["用户名", "密码", "用户名", "密码"]);
+    expect(kv.every((h) => !h.value.includes("：") && !h.value.includes(":"))).toBe(
+      true,
+    );
+    // 占位符紧跟在键名后（同行可读）
+    expect(rd.text).toMatch(/用户名：\{\{secret:[0-9a-f]+\}\}/);
+  });
 });

@@ -1656,7 +1656,11 @@ function ViewModal({
         value: templateById(content.type).label,
       });
     if (content.username)
-      fields.push({ key: "username", label: "用户名", value: content.username });
+      fields.push({
+        key: "username",
+        label: "用户名",
+        value: content.username,
+      });
     if (content.password)
       fields.push({
         key: "password",

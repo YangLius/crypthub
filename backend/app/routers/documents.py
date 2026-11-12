@@ -368,9 +368,7 @@ async def list_placeholders(doc_id: str, request: Request):
     前端解锁密钥区后自行 reveal + 本地解密完成回显，服务端全程不碰明文。
     """
     ctx: Ctx = await current_user(request)
-    d = await db.fetch_one(
-        "SELECT id FROM documents WHERE id = :id", {"id": doc_id}
-    )
+    d = await db.fetch_one("SELECT id FROM documents WHERE id = :id", {"id": doc_id})
     if not d:
         raise HTTPException(404, "文档不存在")
     rows = await db.fetch_all(

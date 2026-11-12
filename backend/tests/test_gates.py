@@ -126,3 +126,23 @@ def test_kv_chinese_fullwidth_semicolon_split():
     text = "用户名：user1；密码：pass1234"
     rd = gates.redact(text, strict=True)
     assert [h.kind for h in rd.hits].count("kv") == 2
+
+
+def test_kv_redaction_preserves_label():
+    """kv 脱敏只替换值，保留「键名：」前缀，脱敏文本保持可读；
+    Hit.key 归类字段、Hit.value 只含纯凭据值（与 TS redact.ts 同源）。"""
+    text = "47.109.143.246\n用户名：root\n密码：Xzg2020$\n\n用户名：deploy\n密码：Xzg2020$"
+    rd = gates.redact(text, strict=True)
+    assert [h.kind for h in rd.hits].count("kv") == 4
+    # 标签全部保留在脱敏文本中
+    for label in ("用户名：", "密码："):
+        assert rd.text.count(label) == 2
+    # 值被替换、键名不在 Hit.value 里
+    assert "root" not in rd.text
+    assert "Xzg2020$" not in rd.text
+    assert all(":" not in h.value and "：" not in h.value for h in rd.hits if h.kind == "kv")
+    kv = [h for h in rd.hits if h.kind == "kv"]
+    assert [h.key for h in kv] == ["用户名", "密码", "用户名", "密码"]
+    # 重扫已脱敏文本不得再次命中（占位符不被误报）
+    rd2 = gates.redact(rd.text, strict=True)
+    assert not [h for h in rd2.hits if h.kind == "kv"]

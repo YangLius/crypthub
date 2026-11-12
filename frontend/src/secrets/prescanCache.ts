@@ -144,6 +144,7 @@ export type ContentPatch = Partial<
 export function suggestFields(hit: {
  kind: string;
  value: string;
+ key?: string;
 }): ContentPatch {
  const value = hit.value.trim();
  if (!value) return {};
@@ -154,7 +155,16 @@ export function suggestFields(hit: {
  ) {
   return { tokens: value };
  }
- // kv：拆出键名归类
+ // kv：新版命中带 key（键名标签）且 value 只有纯值；
+ // 旧缓存（value=整行）走拆键名归类的老路径
+ if (hit.key) {
+  const key = hit.key.trim();
+  if (/pass(word|wd)?|pwd|密码/i.test(key)) return { password: value };
+  if (/user(name)?|账号|用户|login|email/i.test(key)) return { username: value };
+  if (/token|令牌|api[\s_-]?key|secret|密钥|key/i.test(key))
+   return { tokens: value };
+  return { notes: `${key}: ${value}` };
+ }
  const m = value.match(/^([^=:：]{1,48}?)[=:：]\s*(.+)$/s);
  if (!m) return { tokens: value };
  const key = m[1].trim();
