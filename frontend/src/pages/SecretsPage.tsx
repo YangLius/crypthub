@@ -3,7 +3,7 @@
  * 所有加解密在浏览器完成；服务端只搬密文。
  * 创建条目时由客户端生成 UUID（AAD 需预先绑定 id），服务端原样落库。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import {
   buildRotationPlan,
@@ -604,9 +604,7 @@ function SecretList(props: {
                         const drop = new Set(
                           [p.id, pairRow?.id].filter(Boolean) as string[],
                         );
-                        onPendingChange(
-                          pending.filter((x) => !drop.has(x.id)),
-                        );
+                        onPendingChange(pending.filter((x) => !drop.has(x.id)));
                       }}
                     >
                       {pairRow ? "忽略（两条）" : "忽略"}
@@ -1031,6 +1029,8 @@ function CreateModal({
   const [tplId, setTplId] = useState<TemplateId>("login");
   // 认领时把源文档的目录链镜像到密钥区（逐级 find-or-create），归档到最深层
   const [mirror, setMirror] = useState<MirroredFolder | null>(null);
+  // 镜像解析是异步的：把 Promise 存 ref，提交时 await，避免用户快速点提交时 mirror 还未解析完 → 归到根目录
+  const mirrorRef = useRef<Promise<MirroredFolder> | null>(null);
 
   // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段；
   // 用户名↔密码配对的另一条也一并回填；命中附近有网址时自动识别为「网站」类型；
@@ -1079,9 +1079,14 @@ function CreateModal({
   useEffect(() => {
     setMirror(null);
     const docId = pendingRow?.source_doc_id;
-    if (!docId) return;
+    if (!docId) {
+      mirrorRef.current = null;
+      return;
+    }
+    const p = ensureMirroredSecretFolder(docId);
+    mirrorRef.current = p;
     let alive = true;
-    ensureMirroredSecretFolder(docId).then((m) => {
+    p.then((m) => {
       if (alive && m.id) setMirror(m);
     });
     return () => {
@@ -1109,6 +1114,9 @@ function CreateModal({
     }
     setBusy(true);
     try {
+      // 认领场景：镜像目录可能在提交时才解析完——await 兑底，杜绝快速提交归错目录
+      const m =
+        pendingRow && mirrorRef.current ? await mirrorRef.current : mirror;
       const sid = await createSecretRow({
         myUserId,
         myPubkey: me.public_key,
@@ -1122,7 +1130,7 @@ function CreateModal({
           .filter(Boolean),
         content: contentForTemplate(tplId, content),
         // 认领场景：归档到源文档同路径的镜像目录；新建：用弹窗内选择的目录
-        folderId: pendingRow ? mirror?.id : targetFolder || undefined,
+        folderId: pendingRow ? m?.id : targetFolder || undefined,
       });
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       if (cachedPair) removePrescanHit(cachedPair.slug); // 配对命中一并删除
@@ -1338,6 +1346,158 @@ function RecoverModal({
 
 /* ================= 查看 / 共享 / 轮换 / 删除 ================= */
 
+/* ================= 编辑条目（元数据 + 内容复用轮换通道） ================= */
+function EditMetaModal({
+  row,
+  content,
+  onRotate,
+  onClose,
+  onDone,
+}: {
+  row: SecretFull;
+  content: SecretContent;
+  onRotate: (c: SecretContent) => Promise<void>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState(row.name);
+  const [project, setProject] = useState(row.project ?? "");
+  const [env, setEnv] = useState(row.env ?? "");
+  const [tags, setTags] = useState((row.tags ?? []).join(", "));
+  const [tplId, setTplId] = useState<TemplateId>(
+    (content.type as TemplateId) || guessTemplate(content),
+  );
+  const [draft, setDraft] = useState<SecretContent>({ ...content });
+  const [busy, setBusy] = useState(false);
+
+  const sameContent = (a: SecretContent, b: SecretContent) =>
+    (a.username ?? "") === (b.username ?? "") &&
+    (a.password ?? "") === (b.password ?? "") &&
+    (a.url ?? "") === (b.url ?? "") &&
+    (a.tokens ?? "") === (b.tokens ?? "") &&
+    (a.notes ?? "") === (b.notes ?? "");
+
+  const save = async () => {
+    if (!name.trim()) {
+      toastErr("名称不能为空");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.patch(`/secrets/${row.id}`, {
+        name: name.trim(),
+        project: project.trim(),
+        env,
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      });
+      // 内容有变化才走轮换通道（重新加密 + 换新 DEK + 旧密文自动归档为历史版本）
+      const newContent = contentForTemplate(tplId, draft);
+      if (!sameContent(content, newContent)) {
+        await onRotate(newContent);
+      }
+      toast("已保存");
+      onDone();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`编辑《${row.name}》`} onClose={busy ? () => {} : onClose}>
+      <div className="secret-hint">
+        名称/项目/环境/标签为明文元数据；备注与类型字段属加密内容，
+        变更后旧密文自动归档为历史版本。
+      </div>
+      <Field label="名称 *">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </Field>
+      <div className="row">
+        <Field label="项目">
+          <input
+            type="text"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+          />
+        </Field>
+        <Field label="环境">
+          <select value={env} onChange={(e) => setEnv(e.target.value)}>
+            {ENV_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <Field label="标签（逗号分隔）">
+        <input
+          type="text"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+        />
+      </Field>
+      <Field label="类型">
+        <select
+          value={tplId}
+          onChange={(e) => setTplId(e.target.value as TemplateId)}
+        >
+          {TEMPLATES.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {templateById(tplId).fields.map((f) => (
+        <Field key={f.key} label={f.label}>
+          {f.multiline ? (
+            <textarea
+              rows={4}
+              value={draft[f.key] ?? ""}
+              onChange={(e) =>
+                setDraft({ ...draft, [f.key]: e.target.value })
+              }
+              placeholder={f.placeholder ?? ""}
+            />
+          ) : (
+            <input
+              type="text"
+              value={draft[f.key] ?? ""}
+              onChange={(e) =>
+                setDraft({ ...draft, [f.key]: e.target.value })
+              }
+              placeholder={f.placeholder ?? ""}
+            />
+          )}
+        </Field>
+      ))}
+      <Field label="备注">
+        <textarea
+          value={draft.notes ?? ""}
+          onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+        />
+      </Field>
+      <div className="toolbar">
+        <Button kind="primary" disabled={busy} onClick={() => void save()}>
+          {busy ? "保存中…" : "保存"}
+        </Button>
+        <Button kind="ghost" disabled={busy} onClick={onClose}>
+          取消
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function ViewModal({
   vault,
   row,
@@ -1366,6 +1526,7 @@ function ViewModal({
   }>(null);
   const [rotating, setRotating] = useState<string | null>(null);
   const [versionsText, setVersionsText] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const isOwner = row.is_owner;
 
   const reveal = useCallback(async () => {
@@ -1679,6 +1840,17 @@ function ViewModal({
             paddingTop: 12,
           }}
         >
+          <Button
+            onClick={() => {
+              if (!content) {
+                toastErr("先完成解密");
+                return;
+              }
+              setEditing(true);
+            }}
+          >
+            编辑（名称/环境/标签/备注等）
+          </Button>
           <Button onClick={() => void showVersions()}>查看历史版本</Button>
           <Button
             onClick={() => {
@@ -1712,6 +1884,18 @@ function ViewModal({
         <div className="secret-hint" style={{ marginTop: 14 }}>
           你是被共享方：可查看与复制；轮换/共享管理由条目所有者操作。
         </div>
+      )}
+      {editing && content && (
+        <EditMetaModal
+          row={row}
+          content={content}
+          onRotate={rotate}
+          onClose={() => setEditing(false)}
+          onDone={() => {
+            setEditing(false);
+            onChanged();
+          }}
+        />
       )}
       {confirming && (
         <ConfirmModal
