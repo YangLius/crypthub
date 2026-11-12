@@ -48,9 +48,10 @@ _RE_CONN = re.compile(
 
 _RE_KV = re.compile(
     r"(?i)(?<![A-Za-z0-9_{])(?:password|passwd|pwd|secret|token|api[_-]?key|"
-    r"access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret)"
-    r"\s*[:=]\s*(?!\{\{secret:)"
-    r"(\"[^\"]{4,}\"|'[^']{4,}'|[^\s,;\"'`]{4,})"
+    r"access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|"
+    r"用户名|账号|帐号|密码|口令|秘钥|密钥)"
+    r"\s*[:：=＝]\s*(?!\{\{secret:)(?=[^\s，；]*[A-Za-z0-9])"
+    r"(\"[^\"]{4,}\"|'[^']{4,}'|[^\s,;，；\"'`]{4,})"
 )
 
 _RE_TOKEN_CAND = re.compile(r"[A-Za-z0-9+/_.=\-]{20,}")

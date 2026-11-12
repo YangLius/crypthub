@@ -122,3 +122,22 @@ describe("文本类型判定", () => {
     ).toBe(false);
   });
 });
+
+describe("中文键名规则（与 test_gates.py 同源）", () => {
+  it("用户名/密码/账号/口令 + 中文冒号的短凭据命中 kv", () => {
+    const rd = redactAll(
+      "47.109.143.246\n用户名：root\n密码：Xx123456$\n账号：admin\n口令：p@ssw0rd!",
+    );
+    expect(rd.hits.filter((h) => h.kind === "kv").length).toBe(4);
+  });
+  it("无 ASCII 值的中文散文不误报", () => {
+    const rd = redactAll(
+      "账号：本文描述\n密钥：见下文\n账号体系如下：详细登录流程。密钥管理模块负责轮换。",
+    );
+    expect(rd.hits.length).toBe(0);
+  });
+  it("全角分号分隔的多组键值各自命中", () => {
+    const rd = redactAll("用户名：user1；密码：pass1234");
+    expect(rd.hits.filter((h) => h.kind === "kv").length).toBe(2);
+  });
+});

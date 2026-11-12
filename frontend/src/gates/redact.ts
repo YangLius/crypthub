@@ -52,7 +52,7 @@ const RE_CONN =
   /(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|rediss|mssql|ftp):\/\/[^\s:/@]+:[^\s@/]+@[^\s"'<>]+/gi;
 
 const RE_KV =
-  /(?<![A-Za-z0-9_{])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret)\s*[:=]\s*(?!\{\{secret:)("[^"]{4,}"|'[^']{4,}'|[^\s,;"'`]{4,})/gi;
+  /(?<![A-Za-z0-9_{])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|用户名|账号|帐号|密码|口令|秘钥|密钥)\s*[:：=＝]\s*(?!\{\{secret:)(?=[^\s，；]*[A-Za-z0-9])("[^"]{4,}"|'[^']{4,}'|[^\s,;，；"'`]{4,})/gi;
 
 const RE_TOKEN_CAND = /[A-Za-z0-9+/_.=-]{20,}/g;
 const RE_WS_TOKEN = /\S+/g;

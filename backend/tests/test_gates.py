@@ -105,3 +105,24 @@ def test_is_text_mime():
     assert gates.is_text_mime("", "readme.md")
     assert gates.is_text_mime("application/octet-stream", "a.py")
     assert not gates.is_text_mime("application/pdf", "a.pdf")
+
+
+def test_kv_chinese_labels_hit():
+    """中文键名（用户名/密码/账号/口令等）+ 中文冒号的短凭据必须被 kv 规则命中。"""
+    text = "47.109.143.246\n用户名：root\n密码：Xx123456$\n账号：admin\n口令：p@ssw0rd!"
+    rd = gates.redact(text, strict=True)
+    assert [h.kind for h in rd.hits].count("kv") == 4
+
+
+def test_kv_chinese_prose_no_false_positive():
+    """无 ASCII 字符的中文「值」（散文/说明）不得误报；键名后无紧跟冒号也不命中。"""
+    text = "账号：本文描述\n密钥：见下文\n账号体系如下：详细登录流程。密钥管理模块负责轮换。"
+    rd = gates.redact(text, strict=True)
+    assert not rd.hits
+
+
+def test_kv_chinese_fullwidth_semicolon_split():
+    """同一行多组中文键值用全角分号分隔时各自命中。"""
+    text = "用户名：user1；密码：pass1234"
+    rd = gates.redact(text, strict=True)
+    assert [h.kind for h in rd.hits].count("kv") == 2
