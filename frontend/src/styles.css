@@ -430,6 +430,102 @@ textarea:not(.astryx-text-area textarea) {
   color: var(--muted);
 }
 
+/* ---------- 密钥条目详情（查看弹窗） ---------- */
+.sec-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sec-section {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+.sec-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.secret-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.secret-field {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+}
+.sf-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.sf-value {
+  font-size: 13px;
+  word-break: break-all;
+}
+.sf-value.mono {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.sf-value a {
+  color: #2563eb;
+}
+.sf-masked {
+  letter-spacing: 2px;
+  color: var(--muted);
+}
+.sf-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+.sf-btn {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: inherit;
+}
+.sf-btn:hover {
+  background: var(--line);
+}
+.sf-btn.danger {
+  color: #dc2626;
+  border-color: currentColor;
+}
+.sec-notes {
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+}
+.share-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.share-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  background: #fafafa;
+}
+
 /* ---------- 审计 ---------- */
 .log-reason {
   color: var(--warn);
@@ -800,6 +896,55 @@ textarea:not(.astryx-text-area textarea) {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fafafa;
+}
+/* ---------- 占位符回显 ---------- */
+.ph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ph-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.ph-unlock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ph-unlock input[type="password"] {
+  width: 180px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.ph-val {
+  background: #fff3cd;
+  border-bottom: 2px solid #f0b429;
+  border-radius: 3px;
+  padding: 0 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+  cursor: pointer;
+}
+.ph-val:hover {
+  background: #ffe69c;
+}
+.ph-mark {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--line);
+  font-size: 11px;
 }
 .gh-lang {
   display: inline-flex;

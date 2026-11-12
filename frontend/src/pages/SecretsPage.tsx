@@ -1463,18 +1463,14 @@ function EditMetaModal({
             <textarea
               rows={4}
               value={draft[f.key] ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, [f.key]: e.target.value })
-              }
+              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
               placeholder={f.placeholder ?? ""}
             />
           ) : (
             <input
               type="text"
               value={draft[f.key] ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, [f.key]: e.target.value })
-              }
+              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
               placeholder={f.placeholder ?? ""}
             />
           )}
@@ -1527,6 +1523,9 @@ function ViewModal({
   const [rotating, setRotating] = useState<string | null>(null);
   const [versionsText, setVersionsText] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // 敏感字段（密码/令牌）默认打码，按字段独立显隐
+  const [showPwd, setShowPwd] = useState(false);
+  const [showTok, setShowTok] = useState(false);
   const isOwner = row.is_owner;
 
   const reveal = useCallback(async () => {
@@ -1641,69 +1640,98 @@ function ViewModal({
 
   let contentBody = <Spinner text="取回密文并本地解密…" />;
   if (content !== null) {
+    const fields: {
+      key: string;
+      label: string;
+      value: string;
+      mono?: boolean;
+      mask?: boolean;
+      shown?: boolean;
+      link?: boolean;
+    }[] = [];
+    if (content.type)
+      fields.push({
+        key: "type",
+        label: "类型",
+        value: templateById(content.type).label,
+      });
+    if (content.username)
+      fields.push({ key: "username", label: "用户名", value: content.username });
+    if (content.password)
+      fields.push({
+        key: "password",
+        label: "密码",
+        value: content.password,
+        mono: true,
+        mask: true,
+        shown: showPwd,
+      });
+    if (content.url)
+      fields.push({
+        key: "url",
+        label: "网址",
+        value: content.url,
+        link: true,
+      });
+    if (content.tokens)
+      fields.push({
+        key: "tokens",
+        label: "令牌",
+        value: content.tokens,
+        mono: true,
+        mask: true,
+        shown: showTok,
+      });
     contentBody = (
-      <div className="kv-list">
-        {content.type && (
-          <>
-            <span className="k">类型</span>
-            <span>
-              <Badge tone="info">{templateById(content.type).label}</Badge>
-            </span>
-          </>
-        )}
-        {content.username && (
-          <>
-            <span className="k">用户名</span>
-            <span>
-              {content.username}{" "}
-              <Button
-                kind="ghost"
-                onClick={() => void copy(content.username!, "用户名")}
-              >
-                复制
-              </Button>
-            </span>
-          </>
-        )}
-        {content.password && (
-          <>
-            <span className="k">密码</span>
-            <span className="reveal-box">
-              {content.password}{" "}
-              <Button
-                kind="ghost"
-                onClick={() => void copy(content.password!, "密码")}
-              >
-                复制
-              </Button>
-            </span>
-          </>
-        )}
-        {content.url && (
-          <>
-            <span className="k">地址</span>
-            <span>{content.url}</span>
-          </>
-        )}
-        {content.tokens && (
-          <>
-            <span className="k">令牌</span>
-            <span className="reveal-box">
-              {content.tokens}{" "}
-              <Button
-                kind="ghost"
-                onClick={() => void copy(content.tokens!, "令牌")}
-              >
-                复制
-              </Button>
-            </span>
-          </>
-        )}
+      <div className="sec-detail">
+        <div className="sec-section">
+          <div className="sec-section-title">字段</div>
+          <div className="secret-fields">
+            {fields.map((f) => (
+              <div className="secret-field" key={f.key}>
+                <span className="sf-label">{f.label}</span>
+                <span className={`sf-value${f.mono ? " mono" : ""}`}>
+                  {f.mask && !f.shown ? (
+                    <span className="sf-masked">••••••••••••</span>
+                  ) : f.link ? (
+                    <a href={f.value} target="_blank" rel="noreferrer">
+                      {f.value}
+                    </a>
+                  ) : (
+                    f.value
+                  )}
+                </span>
+                <span className="sf-actions">
+                  {f.mask && (
+                    <button
+                      type="button"
+                      className="sf-btn"
+                      onClick={() =>
+                        f.key === "password"
+                          ? setShowPwd(!showPwd)
+                          : setShowTok(!showTok)
+                      }
+                    >
+                      {f.shown ? "隐藏" : "显示"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="sf-btn"
+                    onClick={() => void copy(f.value, f.label)}
+                  >
+                    复制
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
         {content.notes && (
-          <>
-            <span className="k">备注</span>
-            <span style={{ whiteSpace: "pre-wrap" }}>{content.notes}</span>
-          </>
+          <div className="sec-section">
+            <div className="sec-section-title">备注</div>
+            <div className="sec-notes">{content.notes}</div>
+          </div>
         )}
       </div>
     );
@@ -1727,6 +1755,9 @@ function ViewModal({
         {(row.tags ?? []).map((t) => (
           <Badge key={t}>{t}</Badge>
         ))}
+        <span className="muted" style={{ fontSize: 12 }}>
+          更新于 {new Date(row.updated_at).toLocaleString()}
+        </span>
         <span style={{ flex: 1 }} />
         <Button onClick={() => void copy(JSON.stringify(content), "条目 JSON")}>
           复制 JSON
@@ -1736,50 +1767,36 @@ function ViewModal({
       {contentBody}
 
       {isOwner && grants && (
-        <div
-          style={{
-            marginTop: 18,
-            borderTop: "1px solid var(--line)",
-            paddingTop: 12,
-          }}
-        >
-          <h4 style={{ margin: "0 0 8px" }}>
+        <div className="sec-section">
+          <div className="sec-section-title">
             共享（{grants.length} 人有权访问）
-          </h4>
-          <table className="grid">
-            <tbody>
-              {grants.map((g) => (
-                <tr key={g.user_id}>
-                  <td>
-                    {g.display_name || g.username}
-                    {g.user_id === myUserId ? "（我）" : ""}
-                  </td>
-                  <td className="muted">
-                    {new Date(g.created_at).toLocaleDateString()}
-                  </td>
-                  <td>
-                    {g.user_id !== myUserId && (
-                      <Button
-                        kind="danger"
-                        onClick={() =>
-                          setConfirming({
-                            message:
-                              "撤销后对方已看过的内容收不回来；敏感条目建议同时轮换真实密码。确定撤销？",
-                            action: async () => {
-                              await revoke(g.user_id);
-                            },
-                          })
-                        }
-                      >
-                        撤销
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {shareUsers.length > 0 && (
+          </div>
+          <div className="share-chips">
+            {grants.map((g) => (
+              <span className="share-chip" key={g.user_id}>
+                {g.display_name || g.username}
+                {g.user_id === myUserId ? "（我）" : ""}
+                {g.user_id !== myUserId && (
+                  <button
+                    type="button"
+                    className="sf-btn danger"
+                    onClick={() =>
+                      setConfirming({
+                        message:
+                          "撤销后对方已看过的内容收不回来；敏感条目建议同时轮换真实密码。确定撤销？",
+                        action: async () => {
+                          await revoke(g.user_id);
+                        },
+                      })
+                    }
+                  >
+                    撤销
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          {(shareUsers.length > 0 || (targets?.groups ?? []).length > 0) && (
             <div className="toolbar" style={{ marginTop: 8 }}>
               <span className="muted" style={{ fontSize: 12 }}>
                 共享给：
@@ -1828,6 +1845,9 @@ function ViewModal({
               ))}
             </div>
           )}
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            撤销不回收已看过的内容；敏感条目建议同时轮换真实密码。
+          </div>
         </div>
       )}
 

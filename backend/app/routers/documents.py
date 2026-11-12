@@ -359,6 +359,38 @@ async def view_document(doc_id: str, request: Request):
     }
 
 
+@router.get("/{doc_id}/placeholders")
+async def list_placeholders(doc_id: str, request: Request):
+    """本文档的密钥占位符 → 已认领密钥映射（仅供前端本机解密回显）。
+
+    只返回当前用户自己产生的占位符（created_by = 当前用户），
+    且只暴露 slug → secret_id 映射，不含任何明文/密文；
+    前端解锁密钥区后自行 reveal + 本地解密完成回显，服务端全程不碰明文。
+    """
+    ctx: Ctx = await current_user(request)
+    d = await db.fetch_one(
+        "SELECT id FROM documents WHERE id = :id", {"id": doc_id}
+    )
+    if not d:
+        raise HTTPException(404, "文档不存在")
+    rows = await db.fetch_all(
+        "SELECT slug, status, claimed_secret_id FROM pending_secrets"
+        " WHERE source_doc_id = :did AND created_by = :uid"
+        " AND status IN ('open', 'claimed')",
+        {"did": doc_id, "uid": ctx.user["id"]},
+    )
+    return {
+        "placeholders": [
+            {
+                "slug": r["slug"],
+                "status": r["status"],
+                "secret_id": r["claimed_secret_id"],
+            }
+            for r in rows
+        ]
+    }
+
+
 @router.patch("/{doc_id}")
 async def update_document(doc_id: str, body: DocUpdateBody, request: Request):
     ctx: Ctx = await current_user(request)

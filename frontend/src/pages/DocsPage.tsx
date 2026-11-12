@@ -1,10 +1,12 @@
 /** 文档区：上传（客户端预扫 + 确认替换）、列表、元数据、待认领队列、多级目录归档。 */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { isTextLike, redactAll, scan, type Hit } from "../gates/redact";
-import { savePrescanHits } from "../secrets/prescanCache";
+import { savePrescanHits, peekPrescanHit } from "../secrets/prescanCache";
 import { urlHintsFromText } from "../secrets/prescanCache";
+import { openSecret, unlockVault, type SecretContent } from "../crypto/flows";
+import { useApp } from "../store";
 import { toast, toastErr } from "../store";
 import {
   Badge,
@@ -599,13 +601,65 @@ function EditDocModal({
 }
 
 /** 在线查看文档正文：由索引分块拼接的已脱敏安全文本，非原始文件下载。 */
+/* ---------- 占位符回显辅助 ---------- */
+
+const FIELD_LABELS: Record<string, string> = {
+  username: "用户名",
+  password: "密码",
+  url: "网址",
+  tokens: "令牌",
+};
+
+/** 从占位符所在行的前置上下文推断字段：
+ *  "密码：{{secret:x}}" → password（取同行占位符前最近的标签）。 */
+function fieldFromContext(text: string, at: number): string | null {
+  if (at < 0) return null;
+  const lineStart = text.lastIndexOf("\n", at) + 1;
+  const seg = text.slice(lineStart, at);
+  const rules: [RegExp, string][] = [
+    [/用户名|账号|帐号|user(?:name)?\s*[:：=＝]/i, "username"],
+    [/密码|口令|pass(?:word|wd)?\s*[:：=＝]|\bpwd\b/i, "password"],
+    [/网址|域名|站点|网站|链接|\burl\b/i, "url"],
+    [/秘钥|密钥|令牌|token|api[_-]?key|access[_-]?key/i, "tokens"],
+  ];
+  let best: { idx: number; field: string } | null = null;
+  for (const [re, field] of rules) {
+    const m = seg.match(re);
+    if (m && m.index !== undefined && (!best || m.index > best.idx)) {
+      best = { idx: m.index, field };
+    }
+  }
+  return best?.field ?? null;
+}
+
+/** 从解密后的密钥内容中取出占位符对应的值：
+ *  字段明确 → 直接取；否则唯一非空字段；再否则按 密码>令牌>用户名>网址 取。 */
+function pickValue(c: SecretContent, field: string | null): string {
+  const get = (k: string) => (c as Record<string, string | undefined>)[k] ?? "";
+  if (field && get(field)) return get(field);
+  const order = ["password", "tokens", "username", "url"];
+  const populated = order.filter((k) => get(k));
+  if (populated.length === 1) return get(populated[0]);
+  for (const k of order) if (get(k)) return get(k);
+  return "";
+}
+
 function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
+  const { me, vault, setVault } = useApp();
   const [data, setData] = useState<{
     text: string;
     truncated: boolean;
     chunk_count: number;
   } | null>(null);
   const [err, setErr] = useState("");
+  // 占位符回显：slug -> 本机解密出的原值（仅内存，绝不上传）
+  const [resolved, setResolved] = useState<Record<string, string>>({});
+  const [phLabels, setPhLabels] = useState<Record<string, string>>({});
+  const [showSecrets, setShowSecrets] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
+  const [mp, setMp] = useState("");
+  const [uBusy, setUBusy] = useState(false);
+  const [uErr, setUErr] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -626,16 +680,221 @@ function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
     };
   }, [doc.id]);
 
+  const phSlugs = useMemo(() => {
+    if (!data) return [] as string[];
+    return [
+      ...new Set(
+        [...data.text.matchAll(/\{\{secret:([0-9a-f]+)\}\}/g)].map(
+          (m) => m[1],
+        ),
+      ),
+    ];
+  }, [data]);
+
+  // 解析占位符原值：① 本机预扫缓存（上传同一标签页）② 服务端 slug→已认领密钥
+  //   映射 + reveal 本地解密（需已解锁）。解密/回显全部在浏览器完成。
+  useEffect(() => {
+    if (!data || !phSlugs.length || !me) return;
+    let alive = true;
+    void (async () => {
+      const vals: Record<string, string> = {};
+      const labels: Record<string, string> = {};
+      // 层①：本机预扫缓存（含未认领的占位符）
+      for (const s of phSlugs) {
+        const hit = peekPrescanHit(s);
+        if (hit?.value) {
+          vals[s] = hit.value;
+          labels[s] = hit.kind === "kv" ? "预扫命中" : "预扫命中";
+        }
+      }
+      // 层②：已认领占位符 → 密钥条目本机解密（需解锁）
+      const missing = phSlugs.filter((s) => !vals[s]);
+      if (missing.length && vault) {
+        try {
+          const r = await api.get<{
+            placeholders: {
+              slug: string;
+              status: string;
+              secret_id: string | null;
+            }[];
+          }>(`/documents/${doc.id}/placeholders`);
+          const bySecret = new Map<string, string[]>();
+          for (const p of r.placeholders) {
+            if (p.secret_id && missing.includes(p.slug)) {
+              const arr = bySecret.get(p.secret_id) ?? [];
+              arr.push(p.slug);
+              bySecret.set(p.secret_id, arr);
+            }
+          }
+          for (const [sid, slugs] of bySecret) {
+            const rr = await api.get<{
+              content_ct: string;
+              wrapped_dek: string;
+            }>(`/secrets/${sid}/reveal`);
+            const content = openSecret(
+              vault,
+              rr.wrapped_dek,
+              rr.content_ct,
+              sid,
+              me.user_id,
+            );
+            for (const s of slugs) {
+              const at = data.text.indexOf(`{{secret:${s}}}`);
+              const field = fieldFromContext(data.text, at);
+              const v = pickValue(content, field);
+              if (v) {
+                vals[s] = v;
+                labels[s] = field ? FIELD_LABELS[field] : "密钥值";
+              }
+            }
+          }
+        } catch {
+          // 回显是锦上添花：静默降级，占位符保持原样
+        }
+      }
+      if (alive && Object.keys(vals).length) {
+        setResolved((prev) => ({ ...prev, ...vals }));
+        setPhLabels((prev) => ({ ...prev, ...labels }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [data, vault, me, doc.id, phSlugs]);
+
+  const doUnlock = async () => {
+    if (!me?.salt_enc || !mp) {
+      if (!mp) setUErr("请输入主密码");
+      return;
+    }
+    setUBusy(true);
+    setUErr("");
+    try {
+      const v = await unlockVault(mp, {
+        user_id: me.user_id,
+        salt_enc: me.salt_enc,
+        local_check_ct: me.local_check_ct!,
+        priv_wrapped: me.priv_wrapped!,
+      });
+      await api.post("/secrets/unlock");
+      setVault(v);
+      setUnlocking(false);
+      setMp("");
+    } catch (e) {
+      setUErr(e instanceof Error ? e.message : "解锁失败：主密码不正确？");
+    } finally {
+      setUBusy(false);
+    }
+  };
+
+  const copyPh = async (s: string) => {
+    await navigator.clipboard.writeText(resolved[s] ?? "");
+    toast("已复制");
+  };
+
+  // 占位符拆段：普通文本 vs {{secret:slug}} 占位符
+  const segments = useMemo(() => {
+    if (!data) return null;
+    const parts: { t: string; slug?: string }[] = [];
+    const re = /\{\{secret:([0-9a-f]+)\}\}/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(data.text))) {
+      if (m.index > last) parts.push({ t: data.text.slice(last, m.index) });
+      parts.push({ t: m[0], slug: m[1] });
+      last = m.index + m[0].length;
+    }
+    if (last < data.text.length) parts.push({ t: data.text.slice(last) });
+    return parts;
+  }, [data]);
+
+  const resolvedCount = phSlugs.filter((s) => resolved[s]).length;
+
   return (
     <Modal title={`查看 · ${doc.title}`} onClose={onClose} wide>
       {err && <SecretHint>{err}</SecretHint>}
       {!err && !data && <Spinner text="加载正文…" />}
       {data && (
         <div className="doc-view">
+          {phSlugs.length > 0 && (
+            <div className="ph-toolbar">
+              <Badge tone={resolvedCount ? "ok" : "warn"}>
+                🔑 {phSlugs.length} 处密钥占位符
+              </Badge>
+              {vault ? (
+                <label className="ph-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showSecrets}
+                    onChange={(e) => setShowSecrets(e.target.checked)}
+                  />
+                  回显原值（本机解密，不上传）
+                </label>
+              ) : unlocking ? (
+                <span className="ph-unlock">
+                  <input
+                    type="password"
+                    placeholder="主密码"
+                    value={mp}
+                    onChange={(e) => setMp(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void doUnlock();
+                    }}
+                  />
+                  <Button
+                    kind="primary"
+                    disabled={uBusy}
+                    onClick={() => void doUnlock()}
+                  >
+                    {uBusy ? "派生中…" : "解锁并回显"}
+                  </Button>
+                  <Button kind="ghost" onClick={() => setUnlocking(false)}>
+                    取消
+                  </Button>
+                </span>
+              ) : (
+                <Button kind="primary" onClick={() => setUnlocking(true)}>
+                  🔓 输入主密码查看原值
+                </Button>
+              )}
+              {resolvedCount > 0 && resolvedCount < phSlugs.length && (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {phSlugs.length - resolvedCount} 处未认领或本机无缓存，保持占位符
+                </span>
+              )}
+            </div>
+          )}
+          {uErr && (
+            <div className="blocked-banner" style={{ marginBottom: 8 }}>
+              {uErr}
+            </div>
+          )}
           {data.truncated && (
             <SecretHint>内容过长，仅显示前 50 万字符。</SecretHint>
           )}
-          <pre className="doc-view-text">{data.text}</pre>
+          <pre className="doc-view-text">
+            {segments?.map((p, i) => {
+              if (!p.slug) return <span key={i}>{p.t}</span>;
+              const v = showSecrets ? resolved[p.slug] : undefined;
+              if (v) {
+                return (
+                  <span
+                    key={i}
+                    className="ph-val"
+                    title={`${phLabels[p.slug] ?? "密钥值"}（本机解密回显，点击复制）`}
+                    onClick={() => void copyPh(p.slug!)}
+                  >
+                    {v}
+                  </span>
+                );
+              }
+              return (
+                <span key={i} className="ph-mark" title="未解锁或未认领">
+                  {p.t}
+                </span>
+              );
+            })}
+          </pre>
         </div>
       )}
     </Modal>
