@@ -16,6 +16,8 @@ export interface CachedHit {
  value: string;
  title: string;
  project: string;
+ /** 仅 kv：键名标签（用户名/密码等），字段归类必需 */
+ key?: string;
  /** 同批扫描中配对的另一条命中 slug（用户名↔密码成对认领） */
  pair?: string;
  /** 命中附近发现的网址（用于把成对凭据识别为「网站」类型并预填 URL） */
@@ -148,10 +150,7 @@ export function suggestFields(hit: {
 }): ContentPatch {
  const value = hit.value.trim();
  if (!value) return {};
- if (
-  hit.kind === "prefix" ||
-  hit.kind === "connstr"
- ) {
+ if (hit.kind === "prefix" || hit.kind === "connstr") {
   return { tokens: value };
  }
  // 熵命中（IP/哈希/随机串等无格式特征）不再是「API 密钥」，落备注更符合直觉

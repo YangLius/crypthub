@@ -22,6 +22,8 @@ export interface PendingItem {
 /** 命中详情：value 仅存本机 sessionStorage 供认领回填，绝不发给服务端 */
 export interface ResolvedPending extends PendingItem {
   value: string;
+  /** 仅 kv：键名标签（用户名/密码等），字段归类必需 */
+  key?: string;
 }
 
 export interface RedactResult {
@@ -185,7 +187,8 @@ export function redactAll(text: string): RedactResult {
     // 回显/认领时也能从上下文推断字段
     out.push((h.pre ?? "") + "{{secret:" + slug + "}}");
     pending.push({ slug, kind: h.kind });
-    resolved.push({ slug, kind: h.kind, value: h.value });
+    // key 必须透传：认领回填靠它把纯值归类为用户名/密码（丢了会全部落备注）
+    resolved.push({ slug, kind: h.kind, value: h.value, key: h.key });
     pos = h.end;
   }
   out.push(text.slice(pos));

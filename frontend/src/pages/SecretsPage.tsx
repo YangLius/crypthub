@@ -1126,60 +1126,86 @@ function CreateModal({
   const mirrorRef = useRef<Promise<MirroredFolder> | null>(null);
 
   // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段；
-  // 用户名↔密码配对的另一条也一并回填；命中附近有网址时自动识别为「网站」类型；
-  // 存量缓存（无 url 线索）从服务端脱敏文本的占位符附近兕底找一次网址
+  // 用户名↔密码配对的另一条也一并回填；命中附近有网址时自动识别为「网站」类型。
+  // 旧版缓存（脱敏后只存了纯值、丢了键名标签）或本机无缓存时，
+  // 从服务端脱敏文本的「键名：{{secret:slug}}」还原字段归类（值仍在浏览器，零知识）
   useEffect(() => {
     if (!pendingRow) return;
     const hit = peekPrescanHit(pendingRow.slug);
-    if (!hit) return;
-    const paired = findPairedHit(pendingRow.slug);
+    const paired = hit ? findPairedHit(pendingRow.slug) : null;
     setCachedHit(hit);
     setCachedPair(paired);
-    if (hit.title) setName(hit.title);
-    if (hit.project) setProject(hit.project);
+    if (hit?.title) setName(hit.title);
+    if (hit?.project) setProject(hit.project);
+    // 旧格式缓存（kv 无 key 且纯值无法拆键）不乱猜字段，交给脱敏文本标签修复
+    const sf = (h?: CachedHit | null): ContentPatch => {
+      if (!h) return {};
+      if (h.kind === "kv" && !h.key && !/^[^=:：]{1,48}[=:：]/.test(h.value))
+        return {};
+      return suggestFields(h);
+    };
     const merged: ContentPatch = paired
-      ? { ...suggestFields(hit), ...suggestFields(paired) }
-      : suggestFields(hit);
-    const url = paired?.url ?? hit.url;
+      ? { ...sf(hit), ...sf(paired) }
+      : sf(hit);
+    const url = paired?.url ?? hit?.url;
     if (url) merged.url = url;
-    setContent((c) => ({ ...c, ...merged }));
-    // 配对已知（本机缓存或外层服务端兑底）时，即使只拿到一侧的值也归为
-    // 用户名密码类，避免孤密码/孤用户名被误判成 API 密钥或其他
     const knownPair = Boolean(paired ?? pairSlug);
-    const t0 = guessTemplate({ ...EMPTY_CONTENT, ...merged });
-    setTplId(
-      knownPair && !merged.tokens && (merged.username || merged.password)
-        ? merged.url
-          ? "web"
-          : "login"
-        : t0,
-    );
-    if (!url && pendingRow.source_doc_id) {
-      let alive = true;
-      api
-        .get<{ text: string }>(
-          `/documents/${pendingRow.source_doc_id}/redacted`,
-        )
-        .then((r) => {
-          if (!alive) return;
-          const slugs = [pendingRow.slug, paired?.slug].filter(
-            Boolean,
-          ) as string[];
-          const hints = urlHintsFromRedacted(r.text, slugs);
-          const u = hints.get(pendingRow.slug) ?? hints.get(slugs[1] ?? "");
-          if (!u) return;
-          setContent((c) => ({ ...c, url: u }));
-          setTplId(
-            knownPair && !merged.tokens
-              ? "web"
-              : guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }),
+    let t0 = guessTemplate({ ...EMPTY_CONTENT, ...merged });
+    // 配对已知时按用户名密码/网站归类（孤密码/孤用户名不再误判其他/API密钥）
+    if (knownPair && !merged.tokens) t0 = merged.url ? "web" : "login";
+    setContent((c) => ({ ...c, ...merged }));
+    setTplId(t0);
+    if (!pendingRow.source_doc_id) return;
+    let alive = true;
+    api
+      .get<{ text: string }>(
+        `/documents/${pendingRow.source_doc_id}/redacted`,
+      )
+      .then((r) => {
+        if (!alive) return;
+        const partnerSlug = paired?.slug ?? pairSlug;
+        const slugs = [pendingRow.slug, partnerSlug].filter(
+          Boolean,
+        ) as string[];
+        // 占位符前的键名标签 → 字段归类（用户名/密码/令牌/网址等）
+        const labelOf = new Map<string, string>();
+        for (const m of r.text.matchAll(
+          /([^\s：:]{1,12})\s*[:：]\s*\{\{secret:([0-9a-f]+)\}\}/g,
+        )) {
+          labelOf.set(m[2], m[1]);
+        }
+        const fixed: ContentPatch = {};
+        for (const s of slugs) {
+          const label = labelOf.get(s);
+          const v = peekPrescanHit(s)?.value;
+          if (!label || !v) continue;
+          if (/^(网址|域名|站点|网站|url)$/i.test(label)) {
+            fixed.url = v;
+            continue;
+          }
+          Object.assign(
+            fixed,
+            suggestFields({ kind: "kv", value: v, key: label }),
           );
-        })
-        .catch(() => {}); // 非客户端脱敏文档或临时失败：保持当前类型
-      return () => {
-        alive = false;
-      };
-    }
+        }
+        const hints = urlHintsFromRedacted(r.text, slugs);
+        const u = hints.get(pendingRow.slug) ?? hints.get(partnerSlug ?? "");
+        if (u) fixed.url = u;
+        const hasPairFields =
+          slugs.some((s) => /用户名|账号|帐号/.test(labelOf.get(s) ?? "")) &&
+          slugs.some((s) => /密码|口令/.test(labelOf.get(s) ?? ""));
+        const knownPair2 = knownPair || hasPairFields;
+        if (Object.keys(fixed).length === 0 && knownPair2 === knownPair) return;
+        setContent((c) => ({ ...c, ...fixed }));
+        let t = guessTemplate({ ...EMPTY_CONTENT, ...merged, ...fixed });
+        if (knownPair2 && !fixed.tokens && !merged.tokens)
+          t = fixed.url ? "web" : "login";
+        setTplId(t);
+      })
+      .catch(() => {}); // 非客户端脱敏文档或临时失败：保持当前回填
+    return () => {
+      alive = false;
+    };
   }, [pendingRow, pairSlug]);
 
   // 解析源文档目录链并镜像到密钥区；失败不阻塞（mirror 保持 null → 不归档）
@@ -1328,7 +1354,7 @@ function CreateModal({
       setTags(s.tags);
       setContent((cur) => ({ ...cur, notes: s.notes }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在合并目标/候选变化时回填
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在合并目标/候选变化时回填
   }, [mergeSel, mergeCandidates]);
 
   const [busy, setBusy] = useState(false);

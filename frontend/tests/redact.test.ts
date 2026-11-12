@@ -156,5 +156,9 @@ describe("中文键名规则（与 test_gates.py 同源）", () => {
     ).toBe(true);
     // 占位符紧跟在键名后（同行可读）
     expect(rd.text).toMatch(/用户名：\{\{secret:[0-9a-f]+\}\}/);
+    // resolved 必须透传 key：认领回填靠它把纯值归类为用户名/密码（回归：曾丢失导致类型误判）
+    expect(rd.resolved.filter((r) => r.kind === "kv").map((r) => r.key)).toEqual(
+      ["用户名", "密码", "用户名", "密码"],
+    );
   });
 });
