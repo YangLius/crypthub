@@ -49,9 +49,11 @@ import {
 import {
   FolderPickerModal,
   FolderTree,
+  ensureMirroredSecretFolder,
   folderPaths,
   useFolders,
   type FolderSel,
+  type MirroredFolder,
 } from "../components/FolderTree";
 import {
   clampEntries,
@@ -401,12 +403,18 @@ function SecretList(props: {
                 </td>
                 <td>
                   <span
+                    role="button"
+                    tabIndex={0}
                     style={{
                       cursor: "pointer",
                       textDecoration: "underline dotted",
                     }}
                     title="点击筛选该目录"
                     onClick={() => onPickFolder(r.folder_id ?? "root")}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ")
+                        onPickFolder(r.folder_id ?? "root");
+                    }}
                   >
                     {r.folder_id ? (paths.get(r.folder_id) ?? "—") : "根目录"}
                   </span>
@@ -572,10 +580,11 @@ function SecretList(props: {
           myUserId={me.user_id}
           pendingRow={creating.row}
           onClose={() => setCreating(null)}
-          onDone={(sid) => {
+          onDone={(sid, isClaim) => {
             setCreating(null);
-            // 在目录视图里新建时，自动归档到当前目录（"root"=未归档不发请求）
-            if (sid && activeFolder && activeFolder !== "root") {
+            // 在目录视图里新建时，自动归档到当前目录（"root"=未归档不发请求）；
+            // 认领场景已按源文档路径镜像归档，不再覆盖
+            if (sid && !isClaim && activeFolder && activeFolder !== "root") {
               void api
                 .patch(`/secrets/${sid}/folder`, { folder_id: activeFolder })
                 .catch(() => {});
@@ -932,7 +941,8 @@ function CreateModal({
   myUserId: string;
   pendingRow: PendingRow | null; // 从待认领进入时非空
   onClose: () => void;
-  onDone: (secretId: string) => void;
+  // claimed=true：认领场景，已按源文档路径镜像归档，外层不再兜底当前选中目录
+  onDone: (secretId: string, claimed?: boolean) => void;
 }) {
   const { me } = useApp();
   const [name, setName] = useState(
@@ -945,6 +955,8 @@ function CreateModal({
   const [content, setContent] = useState<SecretContent>({ ...EMPTY_CONTENT });
   const [cachedHit, setCachedHit] = useState<CachedHit | null>(null);
   const [tplId, setTplId] = useState<TemplateId>("login");
+  // 认领时把源文档的目录链镜像到密钥区（逐级 find-or-create），归档到最深层
+  const [mirror, setMirror] = useState<MirroredFolder | null>(null);
 
   // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段
   useEffect(() => {
@@ -957,6 +969,20 @@ function CreateModal({
     const fields = suggestFields(hit);
     setContent((c) => ({ ...c, ...fields }));
     setTplId(guessTemplate({ ...EMPTY_CONTENT, ...fields }));
+  }, [pendingRow]);
+
+  // 解析源文档目录链并镜像到密钥区；失败不阻塞（mirror 保持 null → 不归档）
+  useEffect(() => {
+    setMirror(null);
+    const docId = pendingRow?.source_doc_id;
+    if (!docId) return;
+    let alive = true;
+    ensureMirroredSecretFolder(docId).then((m) => {
+      if (alive && m.id) setMirror(m);
+    });
+    return () => {
+      alive = false;
+    };
   }, [pendingRow]);
   const [busy, setBusy] = useState(false);
   const [orgPub, setOrgPub] = useState("");
@@ -991,10 +1017,12 @@ function CreateModal({
           .map((t) => t.trim())
           .filter(Boolean),
         content: contentForTemplate(tplId, content),
+        // 认领场景：归档到源文档同路径的镜像目录（解析失败则不归档）
+        folderId: mirror?.id,
       });
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       toast("已创建（内容仅存密文）");
-      onDone(sid);
+      onDone(sid, Boolean(pendingRow));
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "创建失败");
     } finally {
@@ -1017,6 +1045,13 @@ function CreateModal({
           </>
         )}
       </div>
+      {pendingRow && (
+        <div className="secret-hint" style={{ marginTop: -8 }}>
+          {mirror?.id
+            ? `认领后将归档到密钥区目录：📁 ${mirror.path}（与源文档同路径，目录不存在自动创建）`
+            : "源文档在根目录（或目录解析失败），认领后不自动归档目录。"}
+        </div>
+      )}
       <Field label="名称 *">
         <input
           type="text"

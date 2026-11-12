@@ -346,3 +346,72 @@ export function FolderPickerModal({
     </Modal>
   );
 }
+
+export interface MirroredFolder {
+  /** 最深层镜像目录 id；undefined=未归档（源文档在根目录或链路解析失败） */
+  id?: string;
+  /** 展示路径（根→叶以 / 连接）；空串=无 */
+  path: string;
+}
+
+/** 认领场景：把源文档所在目录链镜像到密钥区（kind=secret，当前用户私有树），
+ *  逐级 find-or-create（同名目录存在则复用，不存在则创建），返回最深层目录。
+ *  任一步失败都不抛出——目录归档是锦上添花，不能阻塞认领主流程。 */
+export async function ensureMirroredSecretFolder(
+  docFolderId: string | null | undefined,
+): Promise<MirroredFolder> {
+  if (!docFolderId) return { path: "" };
+  const load = (k: "doc" | "secret") =>
+    api.get<{ folders: Folder[] }>(`/folders?kind=${k}`);
+  try {
+    const [docR, secR] = await Promise.all([load("doc"), load("secret")]);
+    // 1. 从文档目录沿 parent_id 回溯出 根→叶 名称链（防环）
+    const docById = new Map(docR.folders.map((f) => [f.id, f]));
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    let cur = docById.get(docFolderId);
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      chain.unshift(cur.name);
+      cur = cur.parent_id ? docById.get(cur.parent_id) : undefined;
+    }
+    if (!chain.length) return { path: "" };
+    const path = chain.join("/");
+    // 2. 密钥树逐级 find-or-create（key: parent_id|name，根级 parent 为空串）
+    const byKey = new Map<string, Folder>(
+      secR.folders.map((f) => [`${f.parent_id ?? ""}|${f.name}`, f] as const),
+    );
+    let parentId: string | null = null;
+    let lastId: string | undefined;
+    for (const name of chain) {
+      const key = `${parentId ?? ""}|${name}`;
+      let hit: Folder | undefined = byKey.get(key);
+      if (!hit) {
+        try {
+          const r: { folder: Folder } = await api.post<{ folder: Folder }>(
+            "/folders",
+            {
+              kind: "secret",
+              name,
+              parent_id: parentId,
+            },
+          );
+          hit = r.folder;
+        } catch {
+          // 同名竞态（如已存在）：重拉一次再找；仍无则停在已建到的层级
+          const fresh = await load("secret").catch(() => null);
+          hit = fresh?.folders.find(
+            (f) => f.name === name && (f.parent_id ?? "") === (parentId ?? ""),
+          );
+        }
+      }
+      if (!hit) break;
+      byKey.set(key, hit);
+      parentId = hit.id;
+      lastId = hit.id;
+    }
+    return { id: lastId, path };
+  } catch {
+    return { path: "" };
+  }
+}
