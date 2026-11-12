@@ -105,9 +105,7 @@ _SUMMARY_TASK_EN = (
 )
 
 
-async def summarize_readme(
-    readme: str, *, lang: str = "zh", desc: str = ""
-) -> str:
+async def summarize_readme(readme: str, *, lang: str = "zh", desc: str = "") -> str:
     """把项目 README 提炼成结构化说明文档（简介/用途/特性/使用方法）。
 
     lang: "zh" 中文文档（含中文简介段，官方英文描述会被翻译）/ "en" 英文文档。

@@ -176,8 +176,8 @@ async def _upsert_doc(
     raw = md.encode("utf-8")
     sha = hashlib.sha256(raw).hexdigest()
     old = await db.fetch_one(
-        "SELECT id, file_path FROM documents WHERE title=:t AND folder_id=:fid",
-        {"t": title, "fid": folder_id},
+        "SELECT id, file_path, folder_id FROM documents WHERE title=:t",
+        {"t": title},
     )
     if old:
         rel = old["file_path"]
@@ -189,8 +189,9 @@ async def _upsert_doc(
             raise HTTPException(500, f"写文件失败：{e}") from None
         await db.execute(
             "UPDATE documents SET size_bytes=:sz, sha256=:sha, status='processing',"
-            " error=NULL, chunk_count=0, updated_at=now() WHERE id=:id",
-            {"sz": len(raw), "sha": sha, "id": old["id"]},
+            " error=NULL, chunk_count=0, folder_id=:fid, updated_at=now()"
+            " WHERE id=:id",
+            {"sz": len(raw), "sha": sha, "fid": folder_id, "id": old["id"]},
         )
         await db.execute("DELETE FROM chunks WHERE document_id=:id", {"id": old["id"]})
         await queue.enqueue_index(old["id"])
@@ -275,7 +276,8 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
             except Exception:
                 summary = None
 
-        title = f"GitHub 项目 · {fn} · {date} · {lang_suffix}"
+        # 标题不含日期：同项目同语言永远只有一篇，重复整理=原地更新（日期只在正文里）
+        title = f"GitHub 项目 · {fn} · {lang_suffix}"
         md = _render_repo_md(
             repo,
             hit["cat_label"],
