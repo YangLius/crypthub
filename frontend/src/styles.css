@@ -743,3 +743,20 @@ textarea {
     max-height: 300px;
   }
 }
+
+/* GitHub 范围 Tab 分组分隔 */
+.gh-tab-group {
+  font-size: 12px;
+  color: var(--muted, #7a8698);
+  padding: 4px 6px 4px 2px;
+  position: relative;
+}
+.gh-tab-group:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--line, #e3e6ea);
+}

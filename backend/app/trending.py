@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
@@ -23,15 +24,21 @@ from .config import settings
 
 TREND_URL = "https://github.com/trending?since={since}"
 SEARCH_URL = "https://api.github.com/search/repositories"
-SEARCH_PAGES = 3
 SEARCH_PER_PAGE = 100
-SEARCH_MIN_STARS = 30
-RANGE_KEYS = ("daily", "weekly", "monthly", "new")
+# Search API 单次查询最多返回 1000 条（GitHub 硬上限）；all 范围拉满 10 页。
+SEARCH_PRESETS = {
+    # 近 7 天新建高星（按总星降序）
+    "new": {"stars": ">30", "created_days": 7, "pages": 3},
+    # 全站总星 Top1000（普通池，无时间限制）
+    "all": {"stars": ">1000", "created_days": None, "pages": 10},
+}
+RANGE_KEYS = ("daily", "weekly", "monthly", "new", "all")
 DELTA_LABELS = {
     "daily": "今日新增",
     "weekly": "本周新增",
     "monthly": "本月新增",
     "new": None,
+    "all": None,
 }
 CACHE_TTL = 3600
 _UA = (
@@ -943,27 +950,36 @@ async def _fetch_parse(since: str = "daily") -> list[dict]:
     return repos
 
 
-async def _fetch_new_repos() -> list[dict]:
-    """GitHub Search API：近 7 天新建、星数达标仓库，按总星降序，最多 SEARCH_PAGES 页。"""
-    since_date = (_now_cst() - timedelta(days=7)).strftime("%Y-%m-%d")
+async def _fetch_search_repos(query: str, pages: int) -> list[dict]:
+    """GitHub Search API 按 query 拉取仓库（总星降序）。
+
+    - 匿名限速 10 次/分、令牌 30 次/分：按此自适应请求间隔；
+    - 途中遇到 403/429 且已有部分结果：停止翻页返回已有部分（不再报错）。
+    """
     headers = {"User-Agent": _UA, "Accept": "application/vnd.github+json"}
     if settings.github_token:
         headers["Authorization"] = f"Bearer {settings.github_token}"
+    delay = 2.2 if settings.github_token else 6.5
     repos: list[dict] = []
     seen: set[str] = set()
     async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-        for page in range(1, SEARCH_PAGES + 1):
-            resp = await client.get(
-                SEARCH_URL,
-                params={
-                    "q": f"created:>{since_date} stars:>{SEARCH_MIN_STARS}",
-                    "sort": "stars",
-                    "order": "desc",
-                    "per_page": SEARCH_PER_PAGE,
-                    "page": page,
-                },
-            )
-            resp.raise_for_status()
+        for page in range(1, pages + 1):
+            try:
+                resp = await client.get(
+                    SEARCH_URL,
+                    params={
+                        "q": query,
+                        "sort": "stars",
+                        "order": "desc",
+                        "per_page": SEARCH_PER_PAGE,
+                        "page": page,
+                    },
+                )
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (403, 429) and repos:
+                    break
+                raise
             items = resp.json().get("items", [])
             if not items:
                 break
@@ -984,6 +1000,8 @@ async def _fetch_new_repos() -> list[dict]:
                         "created_at": str(it.get("created_at") or "")[:10],
                     }
                 )
+            if page < pages:
+                await asyncio.sleep(delay)
     if not repos:
         raise RuntimeError(
             "Search API 未返回数据（可能触发匿名限速 10 次/分，可配置 GITHUB_TOKEN 后重试）"
@@ -1024,23 +1042,33 @@ def _taxonomy_payload() -> list[dict]:
 
 
 async def get_range(range_key: str, force: bool = False) -> dict:
-    """按范围取当日数据：daily/weekly/monthly=官方 trending，new=近7天新星池。
+    """按范围取当日数据。
 
-    返回两级分类全量 + taxonomy + delta_label（增量列标题，new 范围为 None）。
-    Redis 缓存 1 小时（按范围分 key）。
+    - daily/weekly/monthly：官方 trending（带增量星数）；
+    - new：近 7 天新建高星仓库（Search API，最多 300 个）；
+    - all：全站总星 Top1000（Search API 单查询硬上限，无时间限制）。
+    返回两级分类全量 + taxonomy + delta_label（new/all 无增量，为 None）。
+    Redis 缓存 1 小时（按范围分 key）；all 冷抓取较慢（限速间隔），请耐心等待。
     """
     if range_key not in RANGE_KEYS:
         raise ValueError(f"未知数据范围：{range_key}")
     date = _now_cst().strftime("%Y-%m-%d")
     key = f"kb:gh:trend:v3:{range_key}:{date}"
-    r = security.redis_client()
+    r = await asyncio.to_thread(security.redis_client_sync)
     if not force:
         with contextlib.suppress(Exception):
-            cached = await r.get(key)
+            cached = await asyncio.to_thread(r.get, key)
             if cached:
                 return json.loads(cached)
-    if range_key == "new":
-        repos = await _fetch_new_repos()
+    if range_key in SEARCH_PRESETS:
+        preset = SEARCH_PRESETS[range_key]
+        query = f"stars:{preset['stars']}"
+        if preset["created_days"]:
+            since_date = (_now_cst() - timedelta(days=preset["created_days"])).strftime(
+                "%Y-%m-%d"
+            )
+            query = f"created:>{since_date} {query}"
+        repos = await _fetch_search_repos(query, preset["pages"])
     else:
         repos = await _fetch_parse(range_key)
     payload = {
@@ -1053,8 +1081,22 @@ async def get_range(range_key: str, force: bool = False) -> dict:
         "categories": _group_all(repos),
     }
     with contextlib.suppress(Exception):
-        await r.set(key, json.dumps(payload, ensure_ascii=False), ex=CACHE_TTL)
+        await asyncio.to_thread(
+            r.set, key, json.dumps(payload, ensure_ascii=False), ex=CACHE_TTL
+        )
     return payload
+
+
+async def get_cached(range_key: str) -> dict | None:
+    """只读缓存取某范围 payload（不发起网络抓取）；无缓存返回 None。"""
+    date = _now_cst().strftime("%Y-%m-%d")
+    key = f"kb:gh:trend:v3:{range_key}:{date}"
+    r = await asyncio.to_thread(security.redis_client_sync)
+    with contextlib.suppress(Exception):
+        cached = await asyncio.to_thread(r.get, key)
+        if cached:
+            return json.loads(cached)
+    return None
 
 
 def repo_index(payloads: list[dict]) -> dict[str, dict]:

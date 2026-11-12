@@ -158,9 +158,14 @@ async def _upsert_doc(
 
 @router.post("/archive")
 async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
-    # 归档索引：合并今日/本周/本月/新星四个范围（各自有缓存，失败的范围跳过）
+    # 归档索引：合并各范围（各自有缓存；all 范围冷抓慢，只读缓存不发起抓取）
     payloads: list[dict] = []
     for rk in trending.RANGE_KEYS:
+        if rk == "all":
+            cached = await trending.get_cached("all")
+            if cached:
+                payloads.append(cached)
+            continue
         with contextlib.suppress(Exception):
             payloads.append(await trending.get_range(rk))
     if not payloads:

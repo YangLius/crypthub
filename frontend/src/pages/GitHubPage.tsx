@@ -5,18 +5,19 @@
  *  - 每页 10 个分页；表格勾选后可批量整理；每行有单独「整理」按钮。
  *  数据由后端抓取 github.com/trending 并做两级关键词分类（缓存 1 小时，可强制刷新）。 */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { toast, toastErr } from "../store";
 import { Button, Empty, Spinner } from "../components/ui";
 
 const PER_PAGE = 10;
 
-const RANGES: Array<{ key: string; label: string }> = [
-  { key: "daily", label: "今日热榜" },
-  { key: "weekly", label: "本周热榜" },
-  { key: "monthly", label: "本月热榜" },
-  { key: "new", label: "近7天新星" },
+const RANGES: Array<{ key: string; label: string; group: string }> = [
+  { key: "daily", label: "今日热榜", group: "热榜" },
+  { key: "weekly", label: "本周热榜", group: "热榜" },
+  { key: "monthly", label: "本月热榜", group: "热榜" },
+  { key: "new", label: "近7天新星", group: "普通" },
+  { key: "all", label: "总星Top1000", group: "普通" },
 ];
 
 interface Repo {
@@ -186,7 +187,7 @@ export default function GitHubPage() {
   const pickRange = (rng: string) => {
     setRange(rng);
     setSel({ cat: null, sub: null });
-    if (rng === "new") setBoard("total");
+    if (rng === "new" || rng === "all") setBoard("total");
   };
   const pickCat = (key: string | null) => {
     setSel({ cat: key, sub: null });
@@ -323,7 +324,10 @@ export default function GitHubPage() {
         <div className="page-head" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>GitHub 热点 · {headerLabel}</h2>
           <div className="toolbar" style={{ marginBottom: 0 }}>
-            <Button disabled={refreshing} onClick={() => void load(range, true)}>
+            <Button
+              disabled={refreshing}
+              onClick={() => void load(range, true)}
+            >
               {refreshing ? "刷新中…" : "强制刷新"}
             </Button>
             <Button
@@ -341,27 +345,35 @@ export default function GitHubPage() {
           {data.date} ·{" "}
           {RANGES.find((x) => x.key === data.range)?.label ?? data.range}：共{" "}
           {data.total} 个项目 · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
-          小时）。官方每日/每周/每月热榜各仅 10 个；「近7天新星」为 Search API 近 7
-          天新建高星仓库（最多约 300 个）。点「整理」归档到
+          小时）。热榜（今日/本周/本月）为官方 trending，各仅 ~10
+          个；普通池：近7天新星≈300 个，总星Top1000 为全站总星最高的前 1000
+          个（Search API 单查询硬上限）。点「整理」归档到
           文档区/GitHub/分类[/子分类]；勾选后可批量整理（同日重复整理=更新）。
         </div>
 
-        {/* 数据范围切换 */}
+        {/* 数据范围切换（热榜 / 普通两组） */}
         <div className="gh-tabs">
-          {RANGES.map((x) => (
-            <button
-              key={x.key}
-              className={`gh-tab ${range === x.key ? "gh-tab-on" : ""}`}
-              onClick={() => pickRange(x.key)}
-            >
-              {x.label}
-            </button>
-          ))}
+          {RANGES.map((x, i) => {
+            const prev = i > 0 ? RANGES[i - 1].group : null;
+            return (
+              <Fragment key={x.key}>
+                {x.group !== prev && (
+                  <span className="gh-tab-group">{x.group}</span>
+                )}
+                <button
+                  className={`gh-tab ${range === x.key ? "gh-tab-on" : ""}`}
+                  onClick={() => pickRange(x.key)}
+                >
+                  {x.label}
+                </button>
+              </Fragment>
+            );
+          })}
         </div>
 
         {/* 双榜切换 */}
         <div className="gh-tabs">
-          {range !== "new" && (
+          {range !== "new" && range !== "all" && (
             <button
               className={`gh-tab ${board === "hot" ? "gh-tab-on" : ""}`}
               onClick={() => setBoard("hot")}
@@ -371,7 +383,9 @@ export default function GitHubPage() {
           )}
           <button
             className={`gh-tab ${
-              board === "total" || range === "new" ? "gh-tab-on" : ""
+              board === "total" || range === "new" || range === "all"
+                ? "gh-tab-on"
+                : ""
             }`}
             onClick={() => setBoard("total")}
           >
@@ -380,6 +394,7 @@ export default function GitHubPage() {
           <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
             本分类 {sorted.length} 个 · 第 {safePage}/{totalPages} 页
             {range === "new" ? " · 新星池无每日增量数据" : ""}
+            {range === "all" ? " · 总星池无每日增量数据，首次加载约需 1 分钟" : ""}
           </span>
         </div>
 
@@ -406,7 +421,9 @@ export default function GitHubPage() {
                   <th>简介</th>
                   <th style={{ width: 90 }}>语言</th>
                   <th style={{ width: 90 }}>总星</th>
-                  <th style={{ width: 90 }}>{data.delta_label ?? "每日新增"}</th>
+                  <th style={{ width: 90 }}>
+                    {data.delta_label ?? "每日新增"}
+                  </th>
                   <th style={{ width: 76 }}>操作</th>
                 </tr>
               </thead>
