@@ -28,7 +28,7 @@ SEARCH_PER_PAGE = 100
 # Search API 单次查询最多返回 1000 条（GitHub 硬上限）；all 范围拉满 10 页。
 SEARCH_PRESETS = {
     # 近 7 天新建高星（按总星降序）
-    "new": {"stars": ">30", "created_days": 7, "pages": 3},
+    "new": {"stars": ">30", "created_days": 7, "pages": 10},
     # 全站总星 Top1000（普通池，无时间限制）
     "all": {"stars": ">1000", "created_days": None, "pages": 10},
 }
@@ -950,8 +950,8 @@ async def _fetch_parse(since: str = "daily") -> list[dict]:
     return repos
 
 
-async def _fetch_search_repos(query: str, pages: int) -> list[dict]:
-    """GitHub Search API 按 query 拉取仓库（总星降序）。
+async def _fetch_search_repos(query: str, start_page: int, end_page: int) -> list[dict]:
+    """GitHub Search API 按 query 拉取仓库（总星降序，页码 [start_page, end_page]）。
 
     - 匿名限速 10 次/分、令牌 30 次/分：按此自适应请求间隔；
     - 途中遇到 403/429 且已有部分结果：停止翻页返回已有部分（不再报错）。
@@ -963,7 +963,7 @@ async def _fetch_search_repos(query: str, pages: int) -> list[dict]:
     repos: list[dict] = []
     seen: set[str] = set()
     async with httpx.AsyncClient(timeout=30, headers=headers) as client:
-        for page in range(1, pages + 1):
+        for page in range(start_page, end_page + 1):
             try:
                 resp = await client.get(
                     SEARCH_URL,
@@ -1000,7 +1000,7 @@ async def _fetch_search_repos(query: str, pages: int) -> list[dict]:
                         "created_at": str(it.get("created_at") or "")[:10],
                     }
                 )
-            if page < pages:
+            if page < end_page:
                 await asyncio.sleep(delay)
     if not repos:
         raise RuntimeError(
@@ -1041,45 +1041,100 @@ def _taxonomy_payload() -> list[dict]:
     ]
 
 
-async def get_range(range_key: str, force: bool = False) -> dict:
+async def get_range(range_key: str, force: bool = False, depth: int | None = None) -> dict:
     """按范围取当日数据。
 
-    - daily/weekly/monthly：官方 trending（带增量星数）；
-    - new：近 7 天新建高星仓库（Search API，最多 300 个）；
+    - daily/weekly/monthly：官方 trending（带增量星数），无渐进概念；
+    - new：近 7 天新建高星仓库（Search API，最多 1000 个）；
     - all：全站总星 Top1000（Search API 单查询硬上限，无时间限制）。
-    返回两级分类全量 + taxonomy + delta_label（new/all 无增量，为 None）。
-    Redis 缓存 1 小时（按范围分 key）；all 冷抓取较慢（限速间隔），请耐心等待。
+
+    搜索池支持 depth 渐进式实时拉取：depth=希望抓到的 GitHub 页数（1..pages_total），
+    缓存里已抓 pages_fetched 页时只续抓缺页不重抓；depth=None 抓满。
+    payload 带 pages_fetched / pages_total；delta_label（new/all 无增量，为 None）。
+    Redis 缓存 1 小时（按范围分 key）。
     """
     if range_key not in RANGE_KEYS:
         raise ValueError(f"未知数据范围：{range_key}")
     date = _now_cst().strftime("%Y-%m-%d")
     key = f"kb:gh:trend:v3:{range_key}:{date}"
     r = await asyncio.to_thread(security.redis_client_sync)
+    preset = SEARCH_PRESETS.get(range_key)
+
+    cached: dict | None = None
     if not force:
         with contextlib.suppress(Exception):
-            cached = await asyncio.to_thread(r.get, key)
-            if cached:
-                return json.loads(cached)
-    if range_key in SEARCH_PRESETS:
-        preset = SEARCH_PRESETS[range_key]
+            raw = await asyncio.to_thread(r.get, key)
+            if raw:
+                cached = json.loads(raw)
+
+    if preset is None:
+        # 热榜（官方 trending）：整包抓取/整包缓存
+        if cached:
+            return cached
+        repos = await _fetch_parse(range_key)
+        payload = {
+            "range": range_key,
+            "delta_label": DELTA_LABELS[range_key],
+            "date": date,
+            "fetched_at": _now_cst().isoformat(timespec="seconds"),
+            "total": len(repos),
+            "taxonomy": _taxonomy_payload(),
+            "categories": _group_all(repos),
+        }
+    else:
+        pages_total: int = preset["pages"]
+        target = pages_total if depth is None else max(1, min(depth, pages_total))
+        fetched = cached.get("pages_fetched", 0) if cached else 0
+        if cached and fetched >= target:
+            return cached
+        # 从缓存还原已抓原始仓库（续抓不重复、已分类信息重建）
+        raw_repos: list[dict] = []
+        seen: set[str] = set()
+        if not force and fetched > 0 and cached:
+            for cat in cached.get("categories", []):
+                for repo in cat.get("repos", []):
+                    fn = repo.get("full_name")
+                    if fn and fn not in seen:
+                        seen.add(fn)
+                        raw_repos.append(
+                            {
+                                k: repo[k]
+                                for k in (
+                                    "full_name",
+                                    "url",
+                                    "desc",
+                                    "language",
+                                    "stars",
+                                    "forks",
+                                    "stars_today",
+                                    "created_at",
+                                )
+                                if k in repo
+                            }
+                        )
         query = f"stars:{preset['stars']}"
         if preset["created_days"]:
-            since_date = (_now_cst() - timedelta(days=preset["created_days"])).strftime(
-                "%Y-%m-%d"
-            )
+            since_date = (
+                _now_cst() - timedelta(days=preset["created_days"])
+            ).strftime("%Y-%m-%d")
             query = f"created:>{since_date} {query}"
-        repos = await _fetch_search_repos(query, preset["pages"])
-    else:
-        repos = await _fetch_parse(range_key)
-    payload = {
-        "range": range_key,
-        "delta_label": DELTA_LABELS[range_key],
-        "date": date,
-        "fetched_at": _now_cst().isoformat(timespec="seconds"),
-        "total": len(repos),
-        "taxonomy": _taxonomy_payload(),
-        "categories": _group_all(repos),
-    }
+        start_page = 1 if force else fetched + 1
+        fresh = await _fetch_search_repos(query, start_page, target)
+        for repo in fresh:
+            if repo["full_name"] not in seen:
+                seen.add(repo["full_name"])
+                raw_repos.append(repo)
+        payload = {
+            "range": range_key,
+            "delta_label": DELTA_LABELS[range_key],
+            "date": date,
+            "fetched_at": _now_cst().isoformat(timespec="seconds"),
+            "total": len(raw_repos),
+            "taxonomy": _taxonomy_payload(),
+            "categories": _group_all(raw_repos),
+            "pages_fetched": target,
+            "pages_total": pages_total,
+        }
     with contextlib.suppress(Exception):
         await asyncio.to_thread(
             r.set, key, json.dumps(payload, ensure_ascii=False), ex=CACHE_TTL

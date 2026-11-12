@@ -24,24 +24,24 @@ COOKIE_NAME = "kb_session"
 
 
 def redis_client() -> aioredis.Redis:
-        global _redis
-        if _redis is None:
-                _redis = aioredis.from_url(settings.redis_url, decode_responses=True)
-        return _redis
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    return _redis
 
 
 _sync_redis: redis.Redis | None = None
 
 
 def redis_client_sync() -> redis.Redis:
-        """同步客户端：大 value（如 trending 缓存数百 KB）不受 asyncio 64KB 行上限限制。
+    """同步客户端：大 value（如 trending 缓存数百 KB）不受 asyncio 64KB 行上限限制。
 
-        在异步上下文中请配合 asyncio.to_thread 使用，避免阻塞事件循环。
-        """
-        global _sync_redis
-        if _sync_redis is None:
-                _sync_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        return _sync_redis
+    在异步上下文中请配合 asyncio.to_thread 使用，避免阻塞事件循环。
+    """
+    global _sync_redis
+    if _sync_redis is None:
+        _sync_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    return _sync_redis
 
 
 async def close_redis() -> None:

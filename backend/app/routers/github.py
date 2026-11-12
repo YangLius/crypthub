@@ -24,10 +24,13 @@ router = APIRouter(prefix="/github", tags=["github"])
 
 @router.get("/trending")
 async def trending_view(
-    range: str = "daily", force: bool = False, ctx: Ctx = Depends(current_user)
+    range: str = "daily",
+    force: bool = False,
+    depth: int | None = None,
+    ctx: Ctx = Depends(current_user),
 ) -> dict:
     try:
-        return await trending.get_range(range, force=force)
+        return await trending.get_range(range, force=force, depth=depth)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     except Exception as e:
@@ -158,11 +161,12 @@ async def _upsert_doc(
 
 @router.post("/archive")
 async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
-    # 归档索引：合并各范围（各自有缓存；all 范围冷抓慢，只读缓存不发起抓取）
+    # 归档索引：热榜范围整包缓存；搜索池（new/all）只读缓存不发起抓取——
+    # 用户能看到的仓库必然已在已加载的缓存池里
     payloads: list[dict] = []
     for rk in trending.RANGE_KEYS:
-        if rk == "all":
-            cached = await trending.get_cached("all")
+        if rk in trending.SEARCH_PRESETS:
+            cached = await trending.get_cached(rk)
             if cached:
                 payloads.append(cached)
             continue

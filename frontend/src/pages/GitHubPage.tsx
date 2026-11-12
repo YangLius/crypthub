@@ -5,7 +5,7 @@
  *  - 每页 10 个分页；表格勾选后可批量整理；每行有单独「整理」按钮。
  *  数据由后端抓取 github.com/trending 并做两级关键词分类（缓存 1 小时，可强制刷新）。 */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { toast, toastErr } from "../store";
 import { Button, Empty, Spinner } from "../components/ui";
@@ -58,6 +58,8 @@ interface TrendData {
   total: number;
   taxonomy: TaxoCat[];
   categories: Cat[];
+  pages_fetched?: number;
+  pages_total?: number;
 }
 
 interface ArchiveResult {
@@ -90,28 +92,55 @@ export default function GitHubPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [openCats, setOpenCats] = useState<Set<string>>(new Set());
   const [archiving, setArchiving] = useState("");
+  const [depthLoading, setDepthLoading] = useState(false);
 
-  const load = useCallback(async (rng: string, force: boolean) => {
-    if (force) setRefreshing(true);
-    else setLoading(true);
-    setErr("");
+  const load = useCallback(
+    async (rng: string, force: boolean, depth?: number) => {
+      if (force) setRefreshing(true);
+      else setLoading(true);
+      setErr("");
+      try {
+        const q = new URLSearchParams({ range: rng });
+        if (force) q.set("force", "true");
+        if (depth) q.set("depth", String(depth));
+        setData(await api.get<TrendData>(`/github/trending?${q.toString()}`));
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "加载失败");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [],
+  );
+
+  // 首次与切范围：搜索池先取 1 页（秒级首屏），热榜整包；range 变化必须重新拉取
+  useEffect(() => {
+    void load(range, false, range === "new" || range === "all" ? 1 : undefined);
+  }, [load, range]);
+
+  // 渐进补抓：后台续抓下 2 页（不转全屏 loading；续抓不重抓已抓页）
+  const depthBusy = useRef(false);
+  const ensureDepth = useCallback(async () => {
+    if (!data || depthBusy.current) return;
+    const pf = data.pages_fetched ?? 0;
+    const pt = data.pages_total ?? 0;
+    if (!pt || pf >= pt) return;
+    depthBusy.current = true;
+    setDepthLoading(true);
     try {
       setData(
         await api.get<TrendData>(
-          `/github/trending?range=${rng}${force ? "&force=true" : ""}`,
+          `/github/trending?range=${data.range}&depth=${Math.min(pf + 2, pt)}`,
         ),
       );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "加载失败");
+    } catch {
+      /* 静默：下次翻页再试 */
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      depthBusy.current = false;
+      setDepthLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void load("daily", false);
-  }, [load]);
+  }, [data]);
 
   // ---- 数据派生 ----
   const catMap = useMemo(() => {
@@ -162,6 +191,11 @@ export default function GitHubPage() {
     safePage * PER_PAGE,
   );
 
+  // 翻页接近当前视图末尾时，后台续抓更多 GitHub 页（实时翻页拉取）
+  useEffect(() => {
+    if (safePage * PER_PAGE >= sorted.length - PER_PAGE) void ensureDepth();
+  }, [safePage, sorted.length, ensureDepth]);
+
   const countCat = useCallback(
     (key: string) => catMap.get(key)?.count ?? 0,
     [catMap],
@@ -188,6 +222,13 @@ export default function GitHubPage() {
     setRange(rng);
     setSel({ cat: null, sub: null });
     if (rng === "new" || rng === "all") setBoard("total");
+    else setBoard("hot");
+  };
+  const topTab: "hot" | "normal" =
+    RANGES.find((x) => x.key === range)?.group === "热榜" ? "hot" : "normal";
+  const pickTop = (t: "hot" | "normal") => {
+    if (t === topTab) return;
+    pickRange(t === "hot" ? "daily" : "all");
   };
   const pickCat = (key: string | null) => {
     setSel({ cat: key, sub: null });
@@ -258,7 +299,10 @@ export default function GitHubPage() {
     return (
       <div className="card">
         <div className="blocked-banner">{err}</div>
-        <Button kind="primary" onClick={() => void load(range, true)}>
+        <Button
+          kind="primary"
+          onClick={() => void load(range, true, data?.pages_fetched)}
+        >
           重试（强制刷新）
         </Button>
       </div>
@@ -326,7 +370,7 @@ export default function GitHubPage() {
           <div className="toolbar" style={{ marginBottom: 0 }}>
             <Button
               disabled={refreshing}
-              onClick={() => void load(range, true)}
+              onClick={() => void load(range, true, data?.pages_fetched)}
             >
               {refreshing ? "刷新中…" : "强制刷新"}
             </Button>
@@ -343,37 +387,51 @@ export default function GitHubPage() {
         </div>
         <div className="secret-hint">
           {data.date} ·{" "}
-          {RANGES.find((x) => x.key === data.range)?.label ?? data.range}：共{" "}
-          {data.total} 个项目 · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
-          小时）。热榜（今日/本周/本月）为官方 trending，各仅 ~10
-          个；普通池：近7天新星≈300 个，总星Top1000 为全站总星最高的前 1000
-          个（Search API 单查询硬上限）。点「整理」归档到
+          {RANGES.find((x) => x.key === data.range)?.label ?? data.range}：已加载{" "}
+          {data.total} 个
+          {data.pages_total
+            ? `（GitHub 第 ${data.pages_fetched}/${data.pages_total} 页）`
+            : ""}          · 抓取时间 {data.fetched_at.slice(11, 16)}（缓存 1
+          小时）。热榜（今日/本周/本月）为官方 trending 各 ~10 个；普通池按总星排序、
+          翻到末尾自动逐页实时拉取（近7天新星 / 总星Top1000，Search API
+          单查询硬上限 1000）。点「整理」归档到
           文档区/GitHub/分类[/子分类]；勾选后可批量整理（同日重复整理=更新）。
         </div>
 
-        {/* 数据范围切换（热榜 / 普通两组） */}
+        {/* 顶层：热榜 / 普通 */}
         <div className="gh-tabs">
-          {RANGES.map((x, i) => {
-            const prev = i > 0 ? RANGES[i - 1].group : null;
-            return (
-              <Fragment key={x.key}>
-                {x.group !== prev && (
-                  <span className="gh-tab-group">{x.group}</span>
-                )}
-                <button
-                  className={`gh-tab ${range === x.key ? "gh-tab-on" : ""}`}
-                  onClick={() => pickRange(x.key)}
-                >
-                  {x.label}
-                </button>
-              </Fragment>
-            );
-          })}
+          <button
+            className={`gh-tab ${topTab === "hot" ? "gh-tab-on" : ""}`}
+            onClick={() => pickTop("hot")}
+          >
+            🔥 热榜
+          </button>
+          <button
+            className={`gh-tab ${topTab === "normal" ? "gh-tab-on" : ""}`}
+            onClick={() => pickTop("normal")}
+          >
+            📦 普通
+          </button>
+        </div>
+
+        {/* 当前组的数据范围 */}
+        <div className="gh-tabs">
+          {RANGES.filter((x) =>
+            topTab === "hot" ? x.group === "热榜" : x.group === "普通",
+          ).map((x) => (
+            <button
+              key={x.key}
+              className={`gh-tab ${range === x.key ? "gh-tab-on" : ""}`}
+              onClick={() => pickRange(x.key)}
+            >
+              {x.label}
+            </button>
+          ))}
         </div>
 
         {/* 双榜切换 */}
         <div className="gh-tabs">
-          {range !== "new" && range !== "all" && (
+          {topTab === "hot" && (
             <button
               className={`gh-tab ${board === "hot" ? "gh-tab-on" : ""}`}
               onClick={() => setBoard("hot")}
@@ -383,9 +441,7 @@ export default function GitHubPage() {
           )}
           <button
             className={`gh-tab ${
-              board === "total" || range === "new" || range === "all"
-                ? "gh-tab-on"
-                : ""
+              board === "total" || topTab === "normal" ? "gh-tab-on" : ""
             }`}
             onClick={() => setBoard("total")}
           >
@@ -393,9 +449,18 @@ export default function GitHubPage() {
           </button>
           <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
             本分类 {sorted.length} 个 · 第 {safePage}/{totalPages} 页
-            {range === "new" ? " · 新星池无每日增量数据" : ""}
-            {range === "all" ? " · 总星池无每日增量数据，首次加载约需 1 分钟" : ""}
+            {topTab === "normal" ? " · 普通池无每日增量数据" : ""}
           </span>
+          {data.pages_total && (data.pages_fetched ?? 0) < data.pages_total ? (
+            <button
+              className="gh-tab"
+              style={{ marginLeft: "auto" }}
+              disabled={depthLoading}
+              onClick={() => void ensureDepth()}
+            >
+              {depthLoading ? "后台抓取中…" : "加载更多（GitHub 下两页）"}
+            </button>
+          ) : null}
         </div>
 
         {sorted.length === 0 ? (
