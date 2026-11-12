@@ -19,6 +19,7 @@ import {
 import {
   FolderPickerModal,
   FolderTree,
+  flattenFolders,
   folderPaths,
   useFolders,
   type FolderSel,
@@ -59,6 +60,8 @@ export default function DocsPage() {
   const [folderKey, setFolderKey] = useState(0);
   const folders = useFolders("doc", folderKey);
   const folderPathMap = folderPaths(folders);
+  // 上传目标目录（uuid；空串=未归档）：弹窗内可选，默认跟随左侧目录树当前选中
+  const [targetFolder, setTargetFolder] = useState("");
   const [confirming, setConfirming] = useState<null | {
     message: string;
     action: () => Promise<void>;
@@ -108,10 +111,12 @@ export default function DocsPage() {
     if (isTextLike(file.name, file.type)) {
       const text = await file.text();
       const hits = scan(text);
+      // 弹窗内可选目标目录，默认跟随左侧目录树当前选中（"root"/null → 未归档）
+      setTargetFolder(folder && folder !== "root" ? folder : "");
       setScanning({ file, text, hits });
     } else {
       // pdf/docx 等二进制：直接上传，服务端兜底扫描（模式 B）
-      await upload(file, false, []);
+      await upload(file, false, [], folder && folder !== "root" ? folder : "");
     }
   };
 
@@ -119,6 +124,7 @@ export default function DocsPage() {
     file: File,
     clientRedacted: boolean,
     pendingItems: { slug: string; kind: string }[],
+    folderId: string,
   ) => {
     setUploading(true);
     try {
@@ -128,7 +134,7 @@ export default function DocsPage() {
       form.append("project", meta.project);
       form.append("tags", meta.tags);
       form.append("client_redacted", String(clientRedacted));
-      form.append("folder_id", folder && folder !== "root" ? folder : "");
+      form.append("folder_id", folderId);
       const r = await api.form<{ id: string }>("/documents", form);
       if (pendingItems.length) {
         await api.post(`/documents/${r.id}/pending`, { items: pendingItems });
@@ -151,7 +157,7 @@ export default function DocsPage() {
     if (!scanning) return;
     if (!replace) {
       // 不替换直接上传原文（仍会过服务端兜底）
-      await upload(scanning.file, false, []);
+      await upload(scanning.file, false, [], targetFolder);
       return;
     }
     const rd = redactAll(scanning.text);
@@ -165,7 +171,7 @@ export default function DocsPage() {
       type: "text/plain",
       lastModified: scanning.file.lastModified,
     });
-    await upload(redactedFile, true, rd.pending);
+    await upload(redactedFile, true, rd.pending, targetFolder);
   };
 
   const filtered = (docs ?? []).filter(
@@ -411,6 +417,19 @@ export default function DocsPage() {
                     ))}
                   </div>
                 )}
+              </Field>
+              <Field label="归档目录">
+                <select
+                  value={targetFolder}
+                  onChange={(e) => setTargetFolder(e.target.value)}
+                >
+                  <option value="">未归档（根目录）</option>
+                  {flattenFolders(folders).map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
               </Field>
               <Field label="标题">
                 <input

@@ -50,6 +50,7 @@ import {
   FolderPickerModal,
   FolderTree,
   ensureMirroredSecretFolder,
+  flattenFolders,
   folderPaths,
   useFolders,
   type FolderSel,
@@ -579,16 +580,11 @@ function SecretList(props: {
         <CreateModal
           myUserId={me.user_id}
           pendingRow={creating.row}
+          defaultFolderSel={activeFolder && activeFolder !== "root" ? activeFolder : ""}
           onClose={() => setCreating(null)}
-          onDone={(sid, isClaim) => {
+          onDone={(sid) => {
             setCreating(null);
-            // 在目录视图里新建时，自动归档到当前目录（"root"=未归档不发请求）；
-            // 认领场景已按源文档路径镜像归档，不再覆盖
-            if (sid && !isClaim && activeFolder && activeFolder !== "root") {
-              void api
-                .patch(`/secrets/${sid}/folder`, { folder_id: activeFolder })
-                .catch(() => {});
-            }
+            // 归档目录由 CreateModal 内部处理（新建=弹窗内选择；认领=镜像源文档路径）
             void refresh();
             const claimed = creating.row;
             // 只认领“正在认领”的那条 pending（此前误认领 pending[0]，会张冠李戴）
@@ -700,6 +696,11 @@ function ImportModal({
   onDone: (imported: number) => void;
 }) {
   const { me } = useApp();
+  const secFolders = useFolders("secret", 0);
+  // 导入目标目录（uuid；空串=未归档）：弹窗内可选，默认跟随左侧目录树当前选中
+  const [targetFolder, setTargetFolder] = useState(
+    defaultFolder && defaultFolder !== "root" ? defaultFolder : "",
+  );
   const [parsed, setParsed] = useState<ParseResult | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [project, setProject] = useState("");
@@ -769,10 +770,7 @@ function ImportModal({
           env,
           tags: [],
           content: { ...e.content, type: guessTemplate(e.content) },
-          folderId:
-            defaultFolder && defaultFolder !== "root"
-              ? defaultFolder
-              : undefined,
+          folderId: targetFolder || undefined,
         });
       } catch {
         failed++;
@@ -820,6 +818,20 @@ function ImportModal({
             if (f) void onFile(f);
           }}
         />
+      </Field>
+      <Field label="归档目录">
+        <select
+          value={targetFolder}
+          disabled={busy}
+          onChange={(e) => setTargetFolder(e.target.value)}
+        >
+          <option value="">未归档（根目录）</option>
+          {flattenFolders(secFolders).map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
+          ))}
+        </select>
       </Field>
       {fileErr && <SecretHint>{fileErr}</SecretHint>}
 
@@ -935,16 +947,20 @@ function ImportModal({
 function CreateModal({
   myUserId,
   pendingRow,
+  defaultFolderSel,
   onClose,
   onDone,
 }: {
   myUserId: string;
   pendingRow: PendingRow | null; // 从待认领进入时非空
+  defaultFolderSel: string; // 新建条目的默认归档目录（uuid；空串=未归档）
   onClose: () => void;
-  // claimed=true：认领场景，已按源文档路径镜像归档，外层不再兜底当前选中目录
-  onDone: (secretId: string, claimed?: boolean) => void;
+  onDone: (secretId: string) => void;
 }) {
   const { me } = useApp();
+  const secFolders = useFolders("secret", 0);
+  // 新建条目的目标目录（uuid；空串=未归档）；认领场景不走此态，用镜像目录
+  const [targetFolder, setTargetFolder] = useState(defaultFolderSel);
   const [name, setName] = useState(
     pendingRow?.doc_title ??
       (pendingRow ? `凭据（${pendingRow.slug.slice(0, 6)}…）` : ""),
@@ -1017,12 +1033,12 @@ function CreateModal({
           .map((t) => t.trim())
           .filter(Boolean),
         content: contentForTemplate(tplId, content),
-        // 认领场景：归档到源文档同路径的镜像目录（解析失败则不归档）
-        folderId: mirror?.id,
+        // 认领场景：归档到源文档同路径的镜像目录；新建：用弹窗内选择的目录
+        folderId: pendingRow ? mirror?.id : targetFolder || undefined,
       });
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
       toast("已创建（内容仅存密文）");
-      onDone(sid, Boolean(pendingRow));
+      onDone(sid);
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "创建失败");
     } finally {
@@ -1051,6 +1067,21 @@ function CreateModal({
             ? `认领后将归档到密钥区目录：📁 ${mirror.path}（与源文档同路径，目录不存在自动创建）`
             : "源文档在根目录（或目录解析失败），认领后不自动归档目录。"}
         </div>
+      )}
+      {!pendingRow && (
+        <Field label="归档目录">
+          <select
+            value={targetFolder}
+            onChange={(e) => setTargetFolder(e.target.value)}
+          >
+            <option value="">未归档（根目录）</option>
+            {flattenFolders(secFolders).map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+        </Field>
       )}
       <Field label="名称 *">
         <input
