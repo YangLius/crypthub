@@ -160,7 +160,8 @@ export function suggestFields(hit: {
  if (hit.key) {
   const key = hit.key.trim();
   if (/pass(word|wd)?|pwd|密码/i.test(key)) return { password: value };
-  if (/user(name)?|账号|用户|login|email/i.test(key)) return { username: value };
+  if (/user(name)?|账号|用户|login|email/i.test(key))
+   return { username: value };
   if (/token|令牌|api[\s_-]?key|secret|密钥|key/i.test(key))
    return { tokens: value };
   return { notes: `${key}: ${value}` };

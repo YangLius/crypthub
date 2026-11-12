@@ -151,9 +151,9 @@ describe("中文键名规则（与 test_gates.py 同源）", () => {
     expect(rd.text).not.toContain("Xzg2020$");
     const kv = rd.hits.filter((h) => h.kind === "kv");
     expect(kv.map((h) => h.key)).toEqual(["用户名", "密码", "用户名", "密码"]);
-    expect(kv.every((h) => !h.value.includes("：") && !h.value.includes(":"))).toBe(
-      true,
-    );
+    expect(
+      kv.every((h) => !h.value.includes("：") && !h.value.includes(":")),
+    ).toBe(true);
     // 占位符紧跟在键名后（同行可读）
     expect(rd.text).toMatch(/用户名：\{\{secret:[0-9a-f]+\}\}/);
   });

@@ -275,6 +275,7 @@ function UnlockGate({
           <Field label="主密码">
             <input
               type="password"
+              autoComplete="new-password"
               value={mp}
               onChange={(e) => setMp(e.target.value)}
             />
@@ -328,7 +329,10 @@ function SecretList(props: {
     onPickFolder,
   } = props;
   // null=关闭 / {row:null}=新建 / {row}=认领该行 —— 避免用裸 null 表达两种含义
-  const [creating, setCreating] = useState<{ row: PendingRow | null } | null>(
+  const [creating, setCreating] = useState<{
+    row: PendingRow | null;
+    pairSlug?: string;
+  } | null>(
     null,
   );
   const [recovering, setRecovering] = useState<{
@@ -347,21 +351,90 @@ function SecretList(props: {
 
   // 成对分组：同一组“用户名+密码”的两条占位符合并为一行展示；
   // 接管一次创建一条密钥，提交后两行一并销掉（CreateModal 内已处理双回填/双认领）
+  // 配对来源：① 本机预扫缓存（同标签页上传，最准）② 服务端脱敏文本占位符
+  // 顺序/标签推断（跨标签页兑底；凭据值始终只在浏览器，零知识不受影响）
+  const [pairMap, setPairMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const out: Record<string, string> = {};
+      for (const p of pending) {
+        const hit = peekPrescanHit(p.slug);
+        const paired = hit ? findPairedHit(p.slug) : null;
+        if (paired) {
+          out[p.slug] = paired.slug;
+          out[paired.slug] = p.slug;
+        }
+      }
+      const missing = pending.filter((p) => !out[p.slug]);
+      const byDoc = new Map<string, string[]>();
+      for (const p of missing) {
+        if (p.source_doc_id)
+          byDoc.set(p.source_doc_id, [
+            ...(byDoc.get(p.source_doc_id) ?? []),
+            p.slug,
+          ]);
+      }
+      for (const [docId, slugs] of byDoc) {
+        try {
+          const r = await api.get<{ text: string }>(
+            `/documents/${docId}/redacted`,
+          );
+          // 新格式：键名保留在占位符前 → 相邻「用户名+密码」成组
+          const labeled = [
+            ...r.text.matchAll(
+              /(用户名|账号|帐号|密码|口令)\s*[:：]\s*\{\{secret:([0-9a-f]+)\}\}/g,
+            ),
+          ];
+          if (labeled.length >= 2) {
+            for (let i = 0; i + 1 < labeled.length; i += 2) {
+              const a = labeled[i];
+              const b = labeled[i + 1];
+              const aUser = /用户名|账号|帐号/.test(a[1]);
+              const bUser = /用户名|账号|帐号/.test(b[1]);
+              if (aUser && !bUser) {
+                out[a[2]] = b[2];
+                out[b[2]] = a[2];
+              }
+            }
+          } else {
+            // 旧格式（无标签）：占位符按出现顺序「用户名在前、密码在后」两两配对
+            const ordered = slugs
+              .filter((s) => r.text.includes(`{{secret:${s}}}`))
+              .sort(
+                (x, y) =>
+                  r.text.indexOf(`{{secret:${x}}}`) -
+                  r.text.indexOf(`{{secret:${y}}}`),
+              );
+            for (let i = 0; i + 1 < ordered.length; i += 2) {
+              out[ordered[i]] = ordered[i + 1];
+              out[ordered[i + 1]] = ordered[i];
+            }
+          }
+        } catch {
+          // 无可读脱敏文本：放弃配对，逐条显示
+        }
+      }
+      if (alive) setPairMap(out);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pending]);
   const groupedPending = useMemo(() => {
     const consumed = new Set<string>();
     const out: { row: PendingRow; pairRow?: PendingRow }[] = [];
     for (const p of pending) {
       if (consumed.has(p.id)) continue;
-      const hit = peekPrescanHit(p.slug);
-      const pairHit = hit ? findPairedHit(p.slug) : null;
-      const pairRow = pairHit
-        ? pending.find((x) => x.slug === pairHit.slug && x.id !== p.id)
+      const pairedSlug = pairMap[p.slug];
+      const pairRow = pairedSlug
+        ? pending.find((x) => x.slug === pairedSlug && x.id !== p.id)
         : undefined;
       if (pairRow) consumed.add(pairRow.id);
       out.push({ row: p, pairRow });
     }
     return out;
-  }, [pending]);
+  }, [pending, pairMap]);
   const [importing, setImporting] = useState(false);
   const [viewing, setViewing] = useState<SecretFull | null>(null);
   const [moving, setMoving] = useState<SecretRow | null>(null);
@@ -589,7 +662,9 @@ function SecretList(props: {
                           ? "创建一条密钥同时填入用户名+密码，两条占位符一并归属"
                           : "创建条目后把占位符归属到它"
                       }
-                      onClick={() => setCreating({ row: p })}
+                      onClick={() =>
+                        setCreating({ row: p, pairSlug: pairRow?.slug })
+                      }
                     >
                       新建并认领
                     </Button>
@@ -621,6 +696,8 @@ function SecretList(props: {
         <CreateModal
           myUserId={me.user_id}
           pendingRow={creating.row}
+          pairSlug={creating.pairSlug}
+          vault={vault}
           defaultFolderSel={
             activeFolder && activeFolder !== "root" ? activeFolder : ""
           }
@@ -1001,12 +1078,16 @@ function ImportModal({
 function CreateModal({
   myUserId,
   pendingRow,
+  pairSlug,
+  vault,
   defaultFolderSel,
   onClose,
   onDone,
 }: {
   myUserId: string;
   pendingRow: PendingRow | null; // 从待认领进入时非空
+  pairSlug?: string; // 成对认领的另一条 slug（本机缓存缺失时由外层传入）
+  vault: UnlockedVault;
   defaultFolderSel: string; // 新建条目的默认归档目录（uuid；空串=未归档）
   onClose: () => void;
   onDone: (secretId: string, pairedSlug?: string) => void;
@@ -1026,6 +1107,12 @@ function CreateModal({
   const [cachedHit, setCachedHit] = useState<CachedHit | null>(null);
   // 配对的另一条命中（用户名↔密码成对认领）；创建成功后一并从待认领清单销掉
   const [cachedPair, setCachedPair] = useState<CachedHit | null>(null);
+  // 合并认领候选：本文档先前已认领的条目（本机解密比对）。认领用户名+密码时，
+  // 若密码/用户名与旧条目一致，应补齐字段更新旧条目，而不是再新建一条
+  const [mergeCandidates, setMergeCandidates] = useState<
+    { sid: string; name: string; content: SecretContent; contentCt: string }[]
+  >([]);
+  const [mergeSel, setMergeSel] = useState(""); // ""=新建条目，否则=合并目标 sid
   const [tplId, setTplId] = useState<TemplateId>("login");
   // 认领时把源文档的目录链镜像到密钥区（逐级 find-or-create），归档到最深层
   const [mirror, setMirror] = useState<MirroredFolder | null>(null);
@@ -1093,6 +1180,91 @@ function CreateModal({
       alive = false;
     };
   }, [pendingRow]);
+
+  // 拉取本文档先前已认领的条目（本机解密）作为合并候选；已认领过的密码，
+  // 再认领用户名+密码时应补齐字段更新旧条目，而不是再新建一条
+  useEffect(() => {
+    const docId = pendingRow?.source_doc_id;
+    if (!docId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await api.get<{
+          placeholders: {
+            slug: string;
+            status: string;
+            secret_id: string | null;
+            secret_name?: string | null;
+          }[];
+        }>(`/documents/${docId}/placeholders`);
+        const out: {
+          sid: string;
+          name: string;
+          content: SecretContent;
+          contentCt: string;
+        }[] = [];
+        for (const p of r.placeholders) {
+          if (!p.secret_id) continue;
+          try {
+            const rr = await api.get<{
+              content_ct: string;
+              wrapped_dek: string;
+            }>(`/secrets/${p.secret_id}/reveal`);
+            const c = openSecret(
+              vault,
+              rr.wrapped_dek,
+              rr.content_ct,
+              p.secret_id,
+              myUserId,
+            );
+            out.push({
+              sid: p.secret_id,
+              name:
+                p.secret_name ||
+                c.notes?.slice(0, 20) ||
+                p.secret_id.slice(0, 6),
+              content: c,
+              contentCt: rr.content_ct,
+            });
+          } catch {
+            // 限流或无授权：跳过该候选
+          }
+        }
+        if (alive && out.length) setMergeCandidates(out);
+      } catch {
+        // 无占位符映射或临时失败：无合并候选，按新建处理
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pendingRow, vault, myUserId]);
+
+  // 默认合并目标：优先用户名精确匹配，其次缺用户名的条目（等待补齐）
+  useEffect(() => {
+    if (!mergeCandidates.length) return;
+    const patch = cachedPair
+      ? { ...suggestFields(cachedHit!), ...suggestFields(cachedPair) }
+      : cachedHit
+        ? suggestFields(cachedHit)
+        : null;
+    const u = patch?.username;
+    const p = patch?.password;
+    let best = "";
+    let bestScore = -1;
+    for (const c of mergeCandidates) {
+      let s = 0;
+      if (u && c.content.username === u) s += 2;
+      else if (!c.content.username) s += 1;
+      if (p && c.content.password === p) s += 1;
+      if (s > bestScore) {
+        bestScore = s;
+        best = c.sid;
+      }
+    }
+    setMergeSel(best || mergeCandidates[0].sid);
+  }, [mergeCandidates, cachedHit, cachedPair]);
+
   const [busy, setBusy] = useState(false);
   const [orgPub, setOrgPub] = useState("");
 
@@ -1114,6 +1286,49 @@ function CreateModal({
     }
     setBusy(true);
     try {
+      // 合并认领：更新先前已认领的条目（只补齐空字段），不再新建
+      if (pendingRow && mergeSel) {
+        const c = mergeCandidates.find((x) => x.sid === mergeSel);
+        if (!c) throw new Error("合并目标不存在，请重选");
+        const merged: SecretContent = { ...c.content };
+        for (const k of ["username", "password", "url", "tokens"] as const) {
+          const v = content[k];
+          if (!merged[k] && v) merged[k] = v;
+        }
+        if (!merged.notes && content.notes) merged.notes = content.notes;
+        merged.type = guessTemplate(merged);
+        const [grantsR, targetsR] = await Promise.all([
+          api.get<{ grants: { user_id: string; wrapped_dek: string }[] }>(
+            `/secrets/${mergeSel}/grants`,
+          ),
+          api.get<{ users: { id: string; public_key: string }[] }>(
+            "/secrets/share-targets",
+          ),
+        ]);
+        const pubkeyMap: Record<string, string> = {};
+        for (const u of targetsR.users) pubkeyMap[u.id] = u.public_key;
+        const plan = buildRotationPlan({
+          secretId: mergeSel,
+          myUserId,
+          content: merged,
+          orgPubB64: orgPub,
+          pubkeyMap,
+          grants: grantsR.grants,
+          oldContentCt: c.contentCt,
+        });
+        await api.put(`/secrets/${mergeSel}/rotate`, {
+          content_ct: plan.contentCt,
+          dek_wrapped_org: plan.dekWrappedOrg,
+          wrapped_deks: plan.wrappedDeks,
+          old_content_ct: plan.oldContentCt,
+          old_wrapped_deks: plan.oldWrappedDeks,
+        });
+        removePrescanHit(pendingRow.slug);
+        if (cachedPair) removePrescanHit(cachedPair.slug);
+        toast(`已合并更新《${c.name}》（旧密文归档为历史版本）`);
+        onDone(mergeSel, cachedPair?.slug ?? pairSlug);
+        return;
+      }
       // 认领场景：镜像目录可能在提交时才解析完——await 兑底，杜绝快速提交归错目录
       const m =
         pendingRow && mirrorRef.current ? await mirrorRef.current : mirror;
@@ -1139,7 +1354,7 @@ function CreateModal({
           ? "已创建（用户名+密码成对认领，内容仅存密文）"
           : "已创建（内容仅存密文）",
       );
-      onDone(sid, cachedPair?.slug);
+      onDone(sid, cachedPair?.slug ?? pairSlug);
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "创建失败");
     } finally {
@@ -1186,9 +1401,26 @@ function CreateModal({
           </select>
         </Field>
       )}
+      {pendingRow && mergeCandidates.length > 0 && (
+        <Field label="合并选项">
+          <select value={mergeSel} onChange={(e) => setMergeSel(e.target.value)}>
+            <option value="">新建条目</option>
+            {mergeCandidates.map((c) => (
+              <option key={c.sid} value={c.sid}>
+                合并到《{c.name}》（本文档先前认领）
+              </option>
+            ))}
+          </select>
+          <div className="muted" style={{ fontSize: 12 }}>
+            选择合并时，本次填写的字段只补齐该条目缺少的字段（旧密文自动归档
+            历史版本），不再新建条目；本机比对，明文不出浏览器。
+          </div>
+        </Field>
+      )}
       <Field label="名称 *">
         <input
           type="text"
+          autoComplete="off"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Redis 生产密码"
@@ -1198,6 +1430,7 @@ function CreateModal({
         <Field label="项目">
           <input
             type="text"
+            autoComplete="off"
             value={project}
             onChange={(e) => setProject(e.target.value)}
           />
@@ -1215,6 +1448,7 @@ function CreateModal({
       <Field label="标签（逗号分隔）">
         <input
           type="text"
+          autoComplete="off"
           value={tags}
           onChange={(e) => setTags(e.target.value)}
         />
@@ -1239,6 +1473,7 @@ function CreateModal({
           {f.multiline ? (
             <textarea
               rows={4}
+              autoComplete="off"
               value={content[f.key] ?? ""}
               onChange={(e) =>
                 setContent({ ...content, [f.key]: e.target.value })
@@ -1248,6 +1483,7 @@ function CreateModal({
           ) : (
             <input
               type="text"
+              autoComplete="off"
               value={content[f.key] ?? ""}
               onChange={(e) =>
                 setContent({ ...content, [f.key]: e.target.value })
@@ -1259,6 +1495,7 @@ function CreateModal({
       ))}
       <Field label="备注">
         <textarea
+          autoComplete="off"
           value={content.notes}
           onChange={(e) => setContent({ ...content, notes: e.target.value })}
         />
@@ -1416,6 +1653,7 @@ function EditMetaModal({
       <Field label="名称 *">
         <input
           type="text"
+          autoComplete="off"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -1424,6 +1662,7 @@ function EditMetaModal({
         <Field label="项目">
           <input
             type="text"
+            autoComplete="off"
             value={project}
             onChange={(e) => setProject(e.target.value)}
           />
@@ -1441,6 +1680,7 @@ function EditMetaModal({
       <Field label="标签（逗号分隔）">
         <input
           type="text"
+          autoComplete="off"
           value={tags}
           onChange={(e) => setTags(e.target.value)}
         />
@@ -1462,6 +1702,7 @@ function EditMetaModal({
           {f.multiline ? (
             <textarea
               rows={4}
+              autoComplete="off"
               value={draft[f.key] ?? ""}
               onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
               placeholder={f.placeholder ?? ""}
@@ -1469,6 +1710,7 @@ function EditMetaModal({
           ) : (
             <input
               type="text"
+              autoComplete="off"
               value={draft[f.key] ?? ""}
               onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
               placeholder={f.placeholder ?? ""}
@@ -1478,6 +1720,7 @@ function EditMetaModal({
       ))}
       <Field label="备注">
         <textarea
+          autoComplete="off"
           value={draft.notes ?? ""}
           onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
         />

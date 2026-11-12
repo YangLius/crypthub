@@ -372,9 +372,11 @@ async def list_placeholders(doc_id: str, request: Request):
     if not d:
         raise HTTPException(404, "文档不存在")
     rows = await db.fetch_all(
-        "SELECT slug, status, claimed_secret_id FROM pending_secrets"
-        " WHERE source_doc_id = :did AND created_by = :uid"
-        " AND status IN ('open', 'claimed')",
+        "SELECT p.slug, p.status, p.claimed_secret_id, s.name AS secret_name"
+        " FROM pending_secrets p"
+        " LEFT JOIN secrets s ON s.id = p.claimed_secret_id"
+        " WHERE p.source_doc_id = :did AND p.created_by = :uid"
+        " AND p.status IN ('open', 'claimed')",
         {"did": doc_id, "uid": ctx.user["id"]},
     )
     return {
@@ -383,6 +385,7 @@ async def list_placeholders(doc_id: str, request: Request):
                 "slug": r["slug"],
                 "status": r["status"],
                 "secret_id": r["claimed_secret_id"],
+                "secret_name": r["secret_name"],
             }
             for r in rows
         ]

@@ -847,6 +847,7 @@ function ViewDocModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
                 <span className="ph-unlock">
                   <input
                     type="password"
+                    autoComplete="new-password"
                     placeholder="主密码"
                     value={mp}
                     onChange={(e) => setMp(e.target.value)}
