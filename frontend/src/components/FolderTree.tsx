@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { toast, toastErr } from "../store";
-import { Button, Modal } from "./ui";
+import { Button, ConfirmModal, Modal, PromptModal } from "./ui";
 
 export type FolderSel = string | null; // null=全部 / "root"=未归档 / uuid=目录
 
@@ -97,6 +97,8 @@ export function FolderTree({
 }: FolderTreeProps) {
   const folders = useFolders(kind, reloadKey);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [renaming, setRenaming] = useState<Folder | null>(null);
+  const [removing, setRemoving] = useState<Folder | null>(null);
   // {parentId} 包一层避免「null 合法值 + !== undefined」陷阱
   const [creating, setCreating] = useState<{ parentId: string | null } | null>(
     null,
@@ -139,12 +141,11 @@ export function FolderTree({
     }
   };
 
-  const renameFolder = async (f: Folder) => {
-    const name = window.prompt("新的目录名", f.name);
-    if (name === null || name.trim() === "" || name === f.name) return;
+  const doRename = async (f: Folder, name: string) => {
+    if (name === f.name) return;
     try {
       await api.patch(`/folders/${f.id}`, {
-        name: name.trim(),
+        name,
         parent_id: f.parent_id,
       });
       onMutate();
@@ -153,13 +154,7 @@ export function FolderTree({
     }
   };
 
-  const removeFolder = async (f: Folder) => {
-    if (
-      !window.confirm(
-        `删除目录「${f.name}」？\n子目录将一并删除，其中的内容回到未归档状态。`,
-      )
-    )
-      return;
+  const doRemove = async (f: Folder) => {
     try {
       await api.delete(`/folders/${f.id}`);
       if (selected === f.id) onSelect(null);
@@ -213,7 +208,7 @@ export function FolderTree({
               type="button"
               className="folder-act"
               title="重命名"
-              onClick={() => void renameFolder(f)}
+              onClick={() => setRenaming(f)}
             >
               ✎
             </button>
@@ -221,7 +216,7 @@ export function FolderTree({
               type="button"
               className="folder-act"
               title="删除"
-              onClick={() => void removeFolder(f)}
+              onClick={() => setRemoving(f)}
             >
               ✕
             </button>
@@ -255,6 +250,24 @@ export function FolderTree({
 
   return (
     <div className="folder-panel">
+      {renaming && (
+        <PromptModal
+          title="重命名目录"
+          label="新的目录名"
+          initial={renaming.name}
+          onOk={(v) => void doRename(renaming, v)}
+          onClose={() => setRenaming(null)}
+        />
+      )}
+      {removing && (
+        <ConfirmModal
+          title="删除目录"
+          message={`删除目录「${removing.name}」？\n子目录将一并删除，其中的内容回到未归档状态。`}
+          danger={true}
+          onOk={() => void doRemove(removing)}
+          onClose={() => setRemoving(null)}
+        />
+      )}
       <div className="folder-panel-head">
         <span className="muted">目录</span>
         <Button

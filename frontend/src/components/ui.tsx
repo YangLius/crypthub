@@ -1,6 +1,6 @@
 /** 基础 UI 组件：Modal / Button / Field / Badge / 空态。 */
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 export function Button(props: {
   children: ReactNode;
@@ -94,4 +94,86 @@ export function Spinner({ text = "加载中…" }: { text?: string }) {
 
 export function SecretHint({ children }: { children: ReactNode }) {
   return <div className="secret-hint">{children}</div>;
+}
+
+/** 应用内确认框（替代 window.confirm——原生对话框可被浏览器禁用导致静默无响应）。 */
+export function ConfirmModal(props: {
+  title: string;
+  message: string;
+  danger?: boolean;
+  okLabel?: string;
+  onOk: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={props.title} onClose={props.onClose}>
+      <div style={{ whiteSpace: "pre-wrap", marginBottom: 14 }}>
+        {props.message}
+      </div>
+      <Button
+        kind={props.danger ? "danger" : "primary"}
+        onClick={() => {
+          props.onOk();
+          props.onClose();
+        }}
+      >
+        {props.okLabel ?? "确认"}
+      </Button>
+      <Button kind="ghost" onClick={props.onClose}>
+        取消
+      </Button>
+    </Modal>
+  );
+}
+
+/** 应用内单字段输入框（替代 window.prompt，同上原因）。 */
+export function PromptModal(props: {
+  title: string;
+  label: string;
+  initial?: string;
+  multiline?: boolean;
+  placeholder?: string;
+  allowEmpty?: boolean;
+  okLabel?: string;
+  onOk: (value: string) => void;
+  onClose: () => void;
+}) {
+  const [v, setV] = useState(props.initial ?? "");
+  const ok = () => {
+    const t = v.trim();
+    if (!t && !props.allowEmpty) return;
+    props.onOk(t);
+    props.onClose();
+  };
+  return (
+    <Modal title={props.title} onClose={props.onClose}>
+      <Field label={props.label}>
+        {props.multiline ? (
+          <textarea
+            rows={4}
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            placeholder={props.placeholder ?? ""}
+          />
+        ) : (
+          <input
+            type="text"
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            placeholder={props.placeholder ?? ""}
+          />
+        )}
+      </Field>
+      <Button
+        kind="primary"
+        disabled={!props.allowEmpty && !v.trim()}
+        onClick={ok}
+      >
+        {props.okLabel ?? "确定"}
+      </Button>
+      <Button kind="ghost" onClick={props.onClose}>
+        取消
+      </Button>
+    </Modal>
+  );
 }

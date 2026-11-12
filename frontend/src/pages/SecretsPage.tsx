@@ -38,9 +38,11 @@ import {
 import {
   Badge,
   Button,
+  ConfirmModal,
   Empty,
   Field,
   Modal,
+  PromptModal,
   SecretHint,
   Spinner,
 } from "../components/ui";
@@ -1196,6 +1198,13 @@ function ViewModal({
     groups: Group[];
   } | null>(null);
   const [err, setErr] = useState("");
+  const [confirming, setConfirming] = useState<null | {
+    message: string;
+    danger?: boolean;
+    action: () => Promise<void>;
+  }>(null);
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [versionsText, setVersionsText] = useState<string | null>(null);
   const isOwner = row.is_owner;
 
   const reveal = useCallback(async () => {
@@ -1265,12 +1274,6 @@ function ViewModal({
   };
 
   const revoke = async (uid: string) => {
-    if (
-      !window.confirm(
-        "撤销后对方已看过的内容收不回来；敏感条目建议同时轮换真实密码。确定撤销？",
-      )
-    )
-      return;
     await api.delete(`/secrets/${row.id}/grants/${uid}`);
     toast("已撤销授权");
     const g = await api.get<{ grants: Grant[] }>(`/secrets/${row.id}/grants`);
@@ -1305,7 +1308,6 @@ function ViewModal({
   };
 
   const remove = async () => {
-    if (!window.confirm(`删除条目《${row.name}》？历史版本一并删除。`)) return;
     await api.delete(`/secrets/${row.id}`);
     toast("已删除");
     onChanged();
@@ -1437,7 +1439,15 @@ function ViewModal({
                     {g.user_id !== myUserId && (
                       <Button
                         kind="danger"
-                        onClick={() => void revoke(g.user_id)}
+                        onClick={() =>
+                          setConfirming({
+                            message:
+                              "撤销后对方已看过的内容收不回来；敏感条目建议同时轮换真实密码。确定撤销？",
+                            action: async () => {
+                              await revoke(g.user_id);
+                            },
+                          })
+                        }
                       >
                         撤销
                       </Button>
@@ -1509,11 +1519,30 @@ function ViewModal({
           }}
         >
           <Button onClick={() => void showVersions()}>查看历史版本</Button>
-          <Button onClick={() => void editAndRotate(content)}>
+          <Button
+            onClick={() => {
+              if (!content) {
+                toastErr("先完成解密");
+                return;
+              }
+              setRotating(content.password ?? "");
+            }}
+          >
             轮换（改内容 + 换新 DEK）
           </Button>
           <span style={{ flex: 1 }} />
-          <Button kind="danger" onClick={() => void remove()}>
+          <Button
+            kind="danger"
+            onClick={() =>
+              setConfirming({
+                message: `删除条目《${row.name}》？历史版本一并删除。`,
+                danger: true,
+                action: async () => {
+                  await remove();
+                },
+              })
+            }
+          >
             删除条目
           </Button>
         </div>
@@ -1522,6 +1551,41 @@ function ViewModal({
         <div className="secret-hint" style={{ marginTop: 14 }}>
           你是被共享方：可查看与复制；轮换/共享管理由条目所有者操作。
         </div>
+      )}
+      {confirming && (
+        <ConfirmModal
+          title="确认操作"
+          message={confirming.message}
+          danger={confirming.danger}
+          onOk={() => void confirming.action()}
+          onClose={() => setConfirming(null)}
+        />
+      )}
+      {rotating !== null && (
+        <PromptModal
+          title="轮换密码（改内容 + 换新 DEK）"
+          label="新密码（轮换后请同步修改源头系统）"
+          initial={rotating}
+          okLabel="轮换并重授权"
+          onOk={(v) => {
+            if (!content) return;
+            void (async () => {
+              try {
+                await rotate({ ...content, password: v });
+              } catch (e) {
+                toastErr(e instanceof Error ? e.message : "轮换失败");
+              }
+            })();
+          }}
+          onClose={() => setRotating(null)}
+        />
+      )}
+      {versionsText !== null && (
+        <Modal title="历史版本" onClose={() => setVersionsText(null)}>
+          <pre style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
+            {versionsText}
+          </pre>
+        </Modal>
       )}
     </Modal>
   );
@@ -1556,19 +1620,6 @@ function ViewModal({
         return `v${v.version} · ${new Date(v.created_at).toLocaleString()}\n${decoded}`;
       }),
     );
-    window.alert(lines.join("\n\n———\n\n") || "没有历史版本");
-  }
-
-  async function editAndRotate(current: SecretContent | null) {
-    if (!current) {
-      toastErr("先完成解密");
-      return;
-    }
-    const password = window.prompt(
-      "新密码（轮换后请同步修改源头系统）",
-      current.password ?? "",
-    );
-    if (password === null) return;
-    await rotate({ ...current, password });
+    setVersionsText(lines.join("\n\n———\n\n") || "没有历史版本");
   }
 }

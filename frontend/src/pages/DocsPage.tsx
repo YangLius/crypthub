@@ -8,6 +8,7 @@ import { toast, toastErr } from "../store";
 import {
   Badge,
   Button,
+  ConfirmModal,
   Empty,
   Field,
   Modal,
@@ -57,6 +58,11 @@ export default function DocsPage() {
   const [folderKey, setFolderKey] = useState(0);
   const folders = useFolders("doc", folderKey);
   const folderPathMap = folderPaths(folders);
+  const [confirming, setConfirming] = useState<null | {
+    message: string;
+    action: () => Promise<void>;
+  }>(null);
+  const [editing, setEditing] = useState<Doc | null>(null);
   const [moving, setMoving] = useState<Doc | null>(null);
 
   // 上传向导状态
@@ -311,23 +317,22 @@ export default function DocsPage() {
                         <Button
                           kind="ghost"
                           title="编辑元数据"
-                          onClick={() => void editDoc(d)}
+                          onClick={() => setEditing(d)}
                         >
                           编辑
                         </Button>
                         <Button
                           kind="danger"
-                          onClick={async () => {
-                            if (
-                              !window.confirm(
-                                `删除《${d.title}》？片段与索引一并删除。`,
-                              )
-                            )
-                              return;
-                            await api.delete(`/documents/${d.id}`);
-                            toast("已删除");
-                            void refresh();
-                          }}
+                          onClick={() =>
+                            setConfirming({
+                              message: `删除《${d.title}》？片段与索引一并删除。`,
+                              action: async () => {
+                                await api.delete(`/documents/${d.id}`);
+                                toast("已删除");
+                                await refresh();
+                              },
+                            })
+                          }
                         >
                           删除
                         </Button>
@@ -461,27 +466,84 @@ export default function DocsPage() {
               onPick={(target) => void moveDoc(moving, target)}
             />
           )}
+
+          {confirming && (
+            <ConfirmModal
+              title="确认删除"
+              message={confirming.message}
+              danger={true}
+              onOk={() => void confirming.action()}
+              onClose={() => setConfirming(null)}
+            />
+          )}
+          {editing && (
+            <EditDocModal
+              doc={editing}
+              onClose={() => setEditing(null)}
+              onSaved={() => {
+                setEditing(null);
+                void refresh();
+              }}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-async function editDoc(d: Doc) {
-  const title = window.prompt("标题", d.title);
-  if (title === null) return;
-  const project = window.prompt("项目", d.project);
-  if (project === null) return;
-  const tags = window.prompt("标签（逗号分隔）", (d.tags ?? []).join(","));
-  if (tags === null) return;
-  await api.patch(`/documents/${d.id}`, {
-    title,
-    project,
-    tags: tags
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean),
-  });
-  toast("已更新");
-  window.location.reload();
+function EditDocModal({
+  doc,
+  onClose,
+  onSaved,
+}: {
+  doc: Doc;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(doc.title);
+  const [project, setProject] = useState(doc.project);
+  const [tags, setTags] = useState((doc.tags ?? []).join(","));
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.patch(`/documents/${doc.id}`, {
+        title,
+        project,
+        tags: tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      });
+      toast("已更新");
+      onSaved();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`编辑《${doc.title}》`} onClose={onClose}>
+      <Field label="标题 *">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+      <Field label="项目">
+        <input value={project} onChange={(e) => setProject(e.target.value)} />
+      </Field>
+      <Field label="标签（逗号分隔）">
+        <input value={tags} onChange={(e) => setTags(e.target.value)} />
+      </Field>
+      <Button
+        kind="primary"
+        disabled={busy || !title.trim()}
+        onClick={() => void save()}
+      >
+        保存
+      </Button>
+    </Modal>
+  );
 }

@@ -8,7 +8,16 @@ import {
   type SecretContent,
 } from "../crypto/flows";
 import { toast, toastErr, useApp } from "../store";
-import { Badge, Button, Empty, Field, Spinner } from "../components/ui";
+import {
+  Badge,
+  Button,
+  ConfirmModal,
+  Empty,
+  Field,
+  Modal,
+  PromptModal,
+  Spinner,
+} from "../components/ui";
 
 interface User {
   id: string;
@@ -82,6 +91,16 @@ function UsersPanel() {
     username: string;
     setup_url: string;
   } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [cuName, setCuName] = useState("");
+  const [cuDisplay, setCuDisplay] = useState("");
+  const [cuRole, setCuRole] = useState("member");
+  const [confirming, setConfirming] = useState<null | {
+    title: string;
+    message: string;
+    danger?: boolean;
+    action: () => Promise<void>;
+  }>(null);
 
   const refresh = useCallback(async () => {
     const r = await api.get<{ users: User[] }>("/admin/users");
@@ -92,18 +111,17 @@ function UsersPanel() {
   }, [refresh]);
 
   const create = async () => {
-    const username = window.prompt("新用户用户名（字母数字._-）");
-    if (!username) return;
-    const display = window.prompt("显示名（可留空）", username) ?? "";
-    const role = window.confirm("设为管理员？（取消=成员）")
-      ? "admin"
-      : "member";
+    if (!cuName.trim()) return;
     try {
       const r = await api.post<{ user: User; setup_url: string }>(
         "/admin/users",
-        { username, display_name: display, role },
+        { username: cuName.trim(), display_name: cuDisplay, role: cuRole },
       );
-      setCreated({ username, setup_url: r.setup_url });
+      setCreated({ username: cuName.trim(), setup_url: r.setup_url });
+      setCreating(false);
+      setCuName("");
+      setCuDisplay("");
+      setCuRole("member");
       await refresh();
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "创建失败");
@@ -113,13 +131,65 @@ function UsersPanel() {
   return (
     <div className="card">
       <div className="toolbar">
-        <Button kind="primary" onClick={() => void create()}>
+        <Button
+          kind="primary"
+          onClick={() => {
+            setCuName("");
+            setCuDisplay("");
+            setCuRole("member");
+            setCreating(true);
+          }}
+        >
           开新账号
         </Button>
         <span className="muted" style={{ fontSize: 12 }}>
           开号后把设置链接单独发给对方；主密码由本人设置，管理员无法代设。
         </span>
       </div>
+      {creating && (
+        <Modal title="开新账号" onClose={() => setCreating(false)}>
+          <div className="secret-hint">
+            创建后生成一次性设置链接（7 天有效），请把链接单独发给对方；
+            主密码由本人打开链接后自行设置，管理员无法代设（零知识）。
+          </div>
+          <Field label="用户名 *（字母数字._-）">
+            <input
+              value={cuName}
+              onChange={(e) => setCuName(e.target.value)}
+              placeholder="zhang.san"
+            />
+          </Field>
+          <Field label="显示名">
+            <input
+              value={cuDisplay}
+              onChange={(e) => setCuDisplay(e.target.value)}
+              placeholder="张三"
+            />
+          </Field>
+          <Field label="角色">
+            <select value={cuRole} onChange={(e) => setCuRole(e.target.value)}>
+              <option value="member">成员</option>
+              <option value="admin">管理员</option>
+            </select>
+          </Field>
+          <Button
+            kind="primary"
+            disabled={!cuName.trim()}
+            onClick={() => void create()}
+          >
+            创建并生成设置链接
+          </Button>
+        </Modal>
+      )}
+      {confirming && (
+        <ConfirmModal
+          title={confirming.title}
+          message={confirming.message}
+          danger={confirming.danger}
+          onOk={() => void confirming.action()}
+          onClose={() => setConfirming(null)}
+        />
+      )}
       {created && (
         <div className="secret-hint">
           {created.username} 的设置链接（一次性，7 天有效）：
@@ -189,17 +259,18 @@ function UsersPanel() {
                   {u.status === "active" ? (
                     <Button
                       kind="danger"
-                      onClick={async () => {
-                        if (
-                          !window.confirm(
-                            `停用 ${u.username}？其会话立即失效，数据保留（审计链不断）。`,
-                          )
-                        )
-                          return;
-                        await api.post(`/admin/users/${u.id}/disable`);
-                        toast("已停用");
-                        void refresh();
-                      }}
+                      onClick={() =>
+                        setConfirming({
+                          title: "停用用户",
+                          message: `停用 ${u.username}？其会话立即失效，数据保留（审计链不断）。`,
+                          danger: true,
+                          action: async () => {
+                            await api.post(`/admin/users/${u.id}/disable`);
+                            toast("已停用");
+                            await refresh();
+                          },
+                        })
+                      }
                     >
                       停用
                     </Button>
@@ -218,37 +289,38 @@ function UsersPanel() {
                   )}
                   <Button
                     kind="ghost"
-                    onClick={async () => {
-                      if (
-                        !window.confirm(
+                    onClick={() =>
+                      setConfirming({
+                        title: "重置开号",
+                        message:
                           "生成新开号令牌？其原条目需通过组织恢复重新授权。",
-                        )
-                      )
-                        return;
-                      const r = await api.post<{ setup_url: string }>(
-                        `/admin/users/${u.id}/reset`,
-                      );
-                      setCreated({
-                        username: u.username,
-                        setup_url: r.setup_url,
-                      });
-                    }}
+                        action: async () => {
+                          const r = await api.post<{ setup_url: string }>(
+                            `/admin/users/${u.id}/reset`,
+                          );
+                          setCreated({
+                            username: u.username,
+                            setup_url: r.setup_url,
+                          });
+                        },
+                      })
+                    }
                   >
                     重置
                   </Button>
                   <Button
                     kind="ghost"
-                    onClick={async () => {
+                    onClick={() => {
                       const role = u.role === "admin" ? "member" : "admin";
-                      if (
-                        !window.confirm(
-                          `将角色改为 ${role === "admin" ? "管理员" : "成员"}？`,
-                        )
-                      )
-                        return;
-                      await api.post(`/admin/users/${u.id}/role`, { role });
-                      toast("已调整");
-                      void refresh();
+                      setConfirming({
+                        title: "调整角色",
+                        message: `将 ${u.username} 的角色改为${role === "admin" ? "管理员" : "成员"}？`,
+                        action: async () => {
+                          await api.post(`/admin/users/${u.id}/role`, { role });
+                          toast("已调整");
+                          await refresh();
+                        },
+                      });
                     }}
                   >
                     角色
@@ -268,6 +340,8 @@ function UsersPanel() {
 function GroupsPanel() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [newGroupName, setNewGroupName] = useState<string | null>(null);
+  const [memberEdit, setMemberEdit] = useState<Group | null>(null);
 
   const refresh = useCallback(async () => {
     const [g, u] = await Promise.all([
@@ -281,32 +355,23 @@ function GroupsPanel() {
     void refresh();
   }, [refresh]);
 
-  const create = async () => {
-    const name = window.prompt("组名（如：运维 / 开发 / 财务）");
-    if (!name) return;
-    await api.post("/admin/groups", { name });
-    await refresh();
-  };
-
-  const setMembers = async (g: Group) => {
-    const current = new Set(g.members.map((m) => m.id));
-    for (const u of users) {
-      const label = `${u.display_name || u.username}`;
-      const want = window.confirm(
-        `组「${g.name}」是否包含 ${label}？（当前：${current.has(u.id) ? "在" : "不在"}）`,
-      );
-      if (want) current.add(u.id);
-      else current.delete(u.id);
+  const createGroup = async (name: string) => {
+    try {
+      await api.post("/admin/groups", { name });
+      toast("已创建组");
+      await refresh();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "创建失败");
     }
-    await api.post(`/admin/groups/${g.id}/members`, { user_ids: [...current] });
-    toast("已更新组成员");
-    await refresh();
   };
 
   return (
     <div className="card">
       <div className="toolbar">
-        <Button kind="primary" onClick={() => void create()}>
+        <Button
+          kind="primary"
+          onClick={() => setNewGroupName("")}
+        >
           新建组
         </Button>
         <span className="muted" style={{ fontSize: 12 }}>
@@ -334,14 +399,95 @@ function GroupsPanel() {
                 </td>
                 <td>{g.members.map((m) => m.username).join("、") || "—"}</td>
                 <td>
-                  <Button onClick={() => void setMembers(g)}>编辑成员</Button>
+                  <Button onClick={() => setMemberEdit(g)}>编辑成员</Button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {newGroupName !== null && (
+        <PromptModal
+          title="新建组"
+          label="组名（如：运维 / 开发 / 财务）"
+          placeholder="运维"
+          onOk={(v) => void createGroup(v)}
+          onClose={() => setNewGroupName(null)}
+        />
+      )}
+      {memberEdit && (
+        <GroupMembersModal
+          group={memberEdit}
+          users={users}
+          onClose={() => setMemberEdit(null)}
+          onSaved={() => {
+            setMemberEdit(null);
+            void refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function GroupMembersModal({
+  group,
+  users,
+  onClose,
+  onSaved,
+}: {
+  group: Group;
+  users: User[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [ids, setIds] = useState<Set<string>>(
+    () => new Set(group.members.map((m) => m.id)),
+  );
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/admin/groups/${group.id}/members`, {
+        user_ids: [...ids],
+      });
+      toast("已更新组成员");
+      onSaved();
+    } catch (e) {
+      toastErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`编辑组「${group.name}」成员`} onClose={onClose}>
+      <div style={{ maxHeight: "50vh", overflow: "auto", marginBottom: 12 }}>
+        {users.map((u) => (
+          <label key={u.id} style={{ display: "block", padding: "4px 0" }}>
+            <input
+              type="checkbox"
+              checked={ids.has(u.id)}
+              onChange={(e) => {
+                const next = new Set(ids);
+                if (e.target.checked) next.add(u.id);
+                else next.delete(u.id);
+                setIds(next);
+              }}
+            />{" "}
+            {u.display_name || u.username}
+            <span className="muted" style={{ fontSize: 12 }}>
+              （{u.username}）
+            </span>
+          </label>
+        ))}
+        {users.length === 0 && <Empty text="还没有用户" />}
+      </div>
+      <Button kind="primary" disabled={busy} onClick={() => void save()}>
+        保存
+      </Button>
+    </Modal>
   );
 }
 
@@ -446,17 +592,26 @@ function RecoveryPanel() {
     }
   };
 
+  const [confirming, setConfirming] = useState<null | {
+    message: string;
+    action: () => Promise<void>;
+  }>(null);
+
   const regrant = async () => {
     if (!orgPriv || !entries || entries.length === 0 || !successorId) {
       toastErr("先选接手人");
       return;
     }
-    if (
-      !window.confirm(
-        `为 ${entries.length} 条条目建立接手人授权${transfer ? "并转移所有权" : ""}？动作将写入审计并通知相关人员。`,
-      )
-    )
-      return;
+    setConfirming({
+      message: `为 ${entries.length} 条条目建立接手人授权${transfer ? "并转移所有权" : ""}？动作将写入审计并通知相关人员。`,
+      action: async () => {
+        await doRegrant();
+      },
+    });
+  };
+
+  const doRegrant = async () => {
+    if (!orgPriv || !entries) return; // 调用方 regrant 已校验，此处仅类型收窄
     setBusy(true);
     try {
       const successor = users.find((u) => u.id === successorId);
@@ -528,6 +683,14 @@ function RecoveryPanel() {
         ：管理员能在此代为恢复任何条目——每次使用都强制记录理由、写审计并通知所有者。
         离线路径用「离线恢复码 + 恢复包」走 scripts/offline_recover.py。
       </div>
+      {confirming && (
+        <ConfirmModal
+          title="确认组织恢复 / 交接"
+          message={confirming.message}
+          onOk={() => void confirming.action()}
+          onClose={() => setConfirming(null)}
+        />
+      )}
       <div className="toolbar">
         <Button
           onClick={() => void exportPackage()}
