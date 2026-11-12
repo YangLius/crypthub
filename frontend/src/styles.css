@@ -255,9 +255,9 @@ textarea {
   inset: 0;
   background: rgba(15, 23, 42, 0.45);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 8vh 16px;
+  padding: 24px 16px;
   z-index: 50;
 }
 .modal {
