@@ -811,3 +811,13 @@ textarea:not(.astryx-text-area textarea) {
 .gh-lang select {
   min-width: 96px;
 }
+
+/* Astryx Dialog 面板是 height:fit-content、无 max-height：高内容弹窗（认领/导入等）
+   会整块溢出屏幕导致底部看不全。内容包在 .modal-scroll 里限高内部滚动，
+   面板高度随之被限制在视口内。 */
+.modal-scroll {
+  max-height: calc(100dvh - 170px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}

@@ -35,14 +35,7 @@ export function Button(props: {
   type?: "button" | "submit";
   title?: string;
 }) {
-  const variant =
-    props.kind === "primary"
-      ? "primary"
-      : props.kind === "ghost"
-        ? "ghost"
-        : props.kind === "danger"
-          ? "destructive"
-          : "secondary";
+  const variant = BADGE_VARIANT[props.kind ?? "default"];
   return (
     <AButton
       label={flattenText(props.children) || props.title || "按钮"}
@@ -93,7 +86,9 @@ export function Modal(props: {
       purpose="info"
     >
       <DialogHeader title={props.title} onOpenChange={props.onClose} />
-      {props.children}
+      {/* Astryx 面板是 height:fit-content 无高度约束，高内容会溢出屏幕；
+          包一层限高滚动容器让面板始终在视口内（认领/导入等高弹窗底部被截断的修复） */}
+      <div className="modal-scroll">{props.children}</div>
     </Dialog>
   );
 }
@@ -102,22 +97,39 @@ export function Badge(props: {
   children: ReactNode;
   tone?: "ok" | "warn" | "err" | "info";
 }) {
-  const variant =
-    props.tone === "ok"
-      ? "success"
-      : props.tone === "warn"
-        ? "warning"
-        : props.tone === "err"
-          ? "error"
-          : "info";
+  const variant = TONE_VARIANT[props.tone ?? "info"];
   return <ABadge variant={variant} label={props.children} />;
 }
 
+const BADGE_VARIANT = {
+  primary: "primary",
+  ghost: "ghost",
+  danger: "destructive",
+  default: "secondary",
+} as const;
+
+const TONE_VARIANT = {
+  ok: "success",
+  warn: "warning",
+  err: "error",
+  info: "info",
+} as const;
+
+const STATUS_TONE: Record<string, "ok" | "err" | "warn"> = {
+  ready: "ok",
+  failed: "err",
+  processing: "warn",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  ready: "已就绪",
+  failed: "失败",
+  processing: "处理中",
+};
+
 export function StatusBadge({ status }: { status: string }) {
-  const tone = status === "ready" ? "ok" : status === "failed" ? "err" : "warn";
-  const label =
-    status === "ready" ? "已就绪" : status === "failed" ? "失败" : "处理中";
-  return <Badge tone={tone}>{label}</Badge>;
+  const tone = STATUS_TONE[status] ?? "warn";
+  return <Badge tone={tone}>{STATUS_LABEL[status] ?? status}</Badge>;
 }
 
 export function Empty({ text }: { text: string }) {

@@ -119,7 +119,9 @@ async def upload(
             sha_bind = sha
             sz_bind = len(raw)
         # 旧索引与新占位符（未认领的）随文档更新一并作废；已认领的保留作审计
-        await db.execute("DELETE FROM chunks WHERE document_id = :did", {"did": dup["id"]})
+        await db.execute(
+            "DELETE FROM chunks WHERE document_id = :did", {"did": dup["id"]}
+        )
         await db.execute(
             "DELETE FROM pending_secrets WHERE source_doc_id = :did AND status = 'open'",
             {"did": dup["id"]},
