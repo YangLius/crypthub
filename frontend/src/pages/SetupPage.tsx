@@ -1,6 +1,8 @@
 /** 开号完成页：生成密钥材料、展示一次性恢复码、（首管理员）初始化组织恢复。 */
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { Card } from "@astryxdesign/core/Card";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import { api } from "../api/client";
 import { buildSetupMaterial } from "../crypto/flows";
 import { useApp, type Me } from "../store";
@@ -126,7 +128,7 @@ export default function SetupPage() {
   if (done) {
     return (
       <div className="auth-wrap">
-        <div className="card auth-card" style={{ width: 560 }}>
+        <Card width={560}>
           <h2 className="auth-title">✅ 账号已就绪</h2>
           <SecretHint>
             下面两个恢复码<b>只显示这一次</b>，关闭页面后无法再查看。
@@ -159,7 +161,7 @@ export default function SetupPage() {
           <Button kind="primary" onClick={() => nav("/docs")}>
             进入系统
           </Button>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -167,10 +169,10 @@ export default function SetupPage() {
   if (infoErr) {
     return (
       <div className="auth-wrap">
-        <div className="card auth-card">
+        <Card width={430}>
           <SecretHint>{infoErr}</SecretHint>
           <Button onClick={() => nav("/login")}>返回登录</Button>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -178,41 +180,39 @@ export default function SetupPage() {
 
   return (
     <div className="auth-wrap">
-      <div className="card auth-card">
+      <Card width={430}>
         <h2 className="auth-title">完成账号设置</h2>
         <p className="auth-sub">
           {info.username} · {info.role === "admin" ? "管理员" : "成员"}
           {info.needs_org && " · 首管理员（将同时初始化组织恢复密钥）"}
         </p>
-        <Field label="显示名">
-          <input
-            type="text"
+        <div className="auth-form">
+          <TextInput
+            label="显示名"
             value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
+            onChange={setDisplayName}
           />
-        </Field>
-        <Field
-          label="主密码"
-          hint="至少 10 位。用于派生登录证明密钥与数据加密密钥；服务端永远看不到它"
-        >
-          <input
+          <TextInput
+            label="主密码"
             type="password"
             value={mp}
-            onChange={(e) => setMp(e.target.value)}
+            onChange={setMp}
+            autoComplete="new-password"
+            description="至少 10 位。用于派生登录证明密钥与数据加密密钥；服务端永远看不到它"
           />
-        </Field>
-        <Field label="确认主密码">
-          <input
+          <TextInput
+            label="确认主密码"
             type="password"
             value={mp2}
-            onChange={(e) => setMp2(e.target.value)}
+            onChange={setMp2}
+            autoComplete="new-password"
           />
-        </Field>
-        {err && <SecretHint>{err}</SecretHint>}
-        <Button kind="primary" disabled={busy} onClick={() => void submit()}>
-          {busy ? "生成密钥中（Argon2id 需数秒）…" : "生成密钥并完成设置"}
-        </Button>
-      </div>
+          {err && <SecretHint>{err}</SecretHint>}
+          <Button kind="primary" disabled={busy} onClick={() => void submit()}>
+            {busy ? "生成密钥中（Argon2id 需数秒）…" : "生成密钥并完成设置"}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
