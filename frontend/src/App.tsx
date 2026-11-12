@@ -47,9 +47,9 @@ function Header() {
   if (!me) return null;
   const navs = [
     ["/docs", "文档"],
+    ["/secrets", "密钥区"],
     ["/chat", "AI 问答"],
     ["/search", "检索"],
-    ["/secrets", "密钥区"],
     ["/audit", "审计"],
   ] as const;
   return (
