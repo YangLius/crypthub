@@ -1026,9 +1026,7 @@ function CreateModal({
           const u = hints.get(pendingRow.slug) ?? hints.get(slugs[1] ?? "");
           if (!u) return;
           setContent((c) => ({ ...c, url: u }));
-          setTplId(
-            guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }),
-          );
+          setTplId(guessTemplate({ ...EMPTY_CONTENT, ...merged, url: u }));
         })
         .catch(() => {}); // 非客户端脱敏文档或临时失败：保持当前类型
       return () => {

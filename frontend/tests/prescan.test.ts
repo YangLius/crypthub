@@ -307,7 +307,9 @@ describe("网址线索识别（urlHints）", () => {
 
   it("远离命中的网址不算线索；服务器地址（IP）不误识别", () => {
     const t1 =
-      "网址：https://far.example.com\n" + "x".repeat(450) + "\n用户名：admin\n密码：p";
+      "网址：https://far.example.com\n" +
+      "x".repeat(450) +
+      "\n用户名：admin\n密码：p";
     const h1 = urlHintsFromText(t1, [{ slug: "f1", ...pos(t1, "用户名") }]);
     expect(h1.size).toBe(0);
 

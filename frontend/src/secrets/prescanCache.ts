@@ -171,7 +171,8 @@ const PH_RE = /\{\{secret:[a-f0-9]{6,64}\}\}/g;
 /** 完整链接（http(s):// 或 www. 开头）；排除常见中文标点与闭合符号 */
 const URL_LINE_RE = /(?:https?:\/\/|www\.)[^\s"'<>，。；、）】》"']{3,150}/i;
 /** 网址类键值行：网址/域名/站点/网站：xxx（不含“地址/host”，避免把服务器 IP 当网址） */
-const URL_KV_RE = /(?:网址|域名|站点|网站|url)\s*[:：=]\s*([^\s，。；、）】》"']{3,150})/i;
+const URL_KV_RE =
+ /(?:网址|域名|站点|网站|url)\s*[:：=]\s*([^\s，。；、）】》"']{3,150})/i;
 
 function urlInWindow(win: string): string | undefined {
  const strip = (s: string) => s.replace(/[.,;:)）】》]+$/, "");

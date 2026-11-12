@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -84,13 +85,87 @@ async def upload(
         up_folder = folder_id
 
     sha = hashlib.sha256(raw).hexdigest()
+    # 重复上传 → 原地更新而不是新建/报 409：
+    #   ① 内容完全相同（sha256 全局一致），或
+    #   ② 同一用户上传过同名文档（内容变了，如脱敏规则升级后重传同一文件）
     dup = await db.fetch_one(
-        "SELECT id, title FROM documents WHERE sha256 = :sha", {"sha": sha}
+        "SELECT id, title, file_path, sha256 FROM documents"
+        " WHERE sha256 = :sha OR (title = :title AND uploaded_by = :uid)"
+        " ORDER BY (sha256 = :sha) DESC, updated_at DESC LIMIT 1",
+        {"sha": sha, "title": title, "uid": ctx.user["id"]},
     )
     if dup:
-        raise HTTPException(
-            409, f"内容重复（已有《{dup['title']}》），如需更新请先删除"
+        same_content = dup["sha256"] == sha
+        if same_content:
+            # 字节一致：复用旧文件，不重复落盘
+            fp_bind: str | None = None
+            sha_bind: str | None = None
+            sz_bind: int | None = None
+        else:
+            rel = storage.doc_file_rel_path(filename)
+            full = storage.abs_path(rel, settings.data_dir)
+            try:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "wb") as fo:
+                    fo.write(raw)
+            except OSError as e:
+                raise HTTPException(500, f"文件保存失败: {e}") from e
+            old_full = storage.abs_path(dup["file_path"], settings.data_dir)
+            if old_full != full:
+                # 旧文件缺失不阻塞更新
+                with contextlib.suppress(OSError):
+                    os.remove(old_full)
+            fp_bind = rel
+            sha_bind = sha
+            sz_bind = len(raw)
+        # 旧索引与新占位符（未认领的）随文档更新一并作废；已认领的保留作审计
+        await db.execute("DELETE FROM chunks WHERE document_id = :did", {"did": dup["id"]})
+        await db.execute(
+            "DELETE FROM pending_secrets WHERE source_doc_id = :did AND status = 'open'",
+            {"did": dup["id"]},
         )
+        row = await db.execute_returning(
+            "UPDATE documents SET title = :t, filename = :f, mime = :m,"
+            " size_bytes = COALESCE(:sz, size_bytes), sha256 = COALESCE(:sha, sha256),"
+            " file_path = COALESCE(:fp, file_path), project = :pj,"
+            " tags = CAST(:tags AS jsonb), folder_id = COALESCE(:fid, folder_id),"
+            " client_redacted = :cr, status = 'processing', error = NULL,"
+            " chunk_count = 0, updated_at = now()"
+            " WHERE id = :did RETURNING id, title, status",
+            {
+                "t": title,
+                "f": filename,
+                "m": mime,
+                "sz": sz_bind,
+                "sha": sha_bind,
+                "fp": fp_bind,
+                "pj": (project or "")[:64],
+                "tags": db.j(_parse_tags(tags)),
+                "fid": up_folder,
+                "cr": client_redacted == "true",
+                "did": dup["id"],
+            },
+        )
+        if row is None:
+            raise HTTPException(500, "更新失败")
+        await queue.enqueue_index(row["id"])
+        await audit.audit(
+            "doc_updated",
+            user=ctx.user,
+            target_type="document",
+            target_id=row["id"],
+            ip=ctx.ip,
+            detail={
+                "update_reason": "same_sha256" if same_content else "re_upload",
+                "size": len(raw),
+            },
+        )
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "status": "processing",
+            "updated": True,
+        }
 
     # 文本类文件服务端兜底扫描在 worker 解析后统一进行（模式 B），
     # 这里只登记客户端预扫产生的占位符。

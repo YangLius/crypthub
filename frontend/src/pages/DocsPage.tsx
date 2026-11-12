@@ -136,14 +136,21 @@ export default function DocsPage() {
       form.append("tags", meta.tags);
       form.append("client_redacted", String(clientRedacted));
       form.append("folder_id", folderId);
-      const r = await api.form<{ id: string }>("/documents", form);
+      const r = await api.form<{ id: string; updated?: boolean }>(
+        "/documents",
+        form,
+      );
       if (pendingItems.length) {
         await api.post(`/documents/${r.id}/pending`, { items: pendingItems });
       }
       toast(
-        clientRedacted
-          ? `已上传（已替换 ${pendingItems.length} 处疑似凭据，可到下方"待认领"存入密钥区）`
-          : "已上传，服务端解析后建立索引",
+        r.updated
+          ? clientRedacted
+            ? `文档已存在，已更新并重建索引（本次替换 ${pendingItems.length} 处疑似凭据，可到下方"待认领"存入密钥区）`
+            : "文档已存在，已更新内容并重建索引"
+          : clientRedacted
+            ? `已上传（已替换 ${pendingItems.length} 处疑似凭据，可到下方"待认领"存入密钥区）`
+            : "已上传，服务端解析后建立索引",
       );
       setScanning(null);
       await refresh();
