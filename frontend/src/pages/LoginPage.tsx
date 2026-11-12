@@ -133,7 +133,7 @@ export default function LoginPage() {
   return (
     <div className="auth-wrap">
       <div className="card auth-card">
-        <h2 className="auth-title">📚 知识库 · 密钥管理</h2>
+        <h2 className="auth-title">🔐 秘枢</h2>
         <p className="auth-sub">公司内部系统 · 零知识架构：主密码不离开本机</p>
         <form
           onSubmit={(e) => {

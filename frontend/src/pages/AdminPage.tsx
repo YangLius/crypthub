@@ -368,10 +368,7 @@ function GroupsPanel() {
   return (
     <div className="card">
       <div className="toolbar">
-        <Button
-          kind="primary"
-          onClick={() => setNewGroupName("")}
-        >
+        <Button kind="primary" onClick={() => setNewGroupName("")}>
           新建组
         </Button>
         <span className="muted" style={{ fontSize: 12 }}>

@@ -54,7 +54,7 @@ function Header() {
   ] as const;
   return (
     <header className="topbar">
-      <div className="topbar-brand">📚 知识库 · 密钥管理</div>
+      <div className="topbar-brand">🔐 秘枢</div>
       <nav className="topbar-nav">
         {navs.map(([to, label]) => (
           <Link
