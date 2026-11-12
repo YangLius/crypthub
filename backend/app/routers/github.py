@@ -132,11 +132,16 @@ def _render_repo_md(
         f" {('Forks' if en else 'Fork')}: {repo['forks']:,}",
         created_line,
         "",
-        f"## {('Description' if en else '简介')}",
-        "",
-        repo["desc"] or ("(no description)" if en else "（无描述）"),
-        "",
     ]
+    # 中文文档有 LLM 摘要时：摘要自带中文「简介」（官方英文描述已被翻译），
+    # 不再重复原样英文描述；英文文档/降级场景保留官方原描述段。
+    if not (summary is not None and not en):
+        head += [
+            f"## {('Description' if en else '简介')}",
+            "",
+            repo["desc"] or ("(no description)" if en else "（无描述）"),
+            "",
+        ]
     tail: list[str] = []
     if summary:
         tail += [summary.strip(), ""]
@@ -262,7 +267,9 @@ async def archive(body: ArchiveBody, ctx: Ctx = Depends(current_user)) -> dict:
         summary: str | None = None
         if readme:
             try:
-                summary = await llm.summarize_readme(readme, lang=body.lang)
+                summary = await llm.summarize_readme(
+                    readme, lang=body.lang, desc=repo.get("desc") or ""
+                )
                 # 提炼内容过一遍脱敏门禁（防 README 示例里的真实凭据被原样带出）
                 summary = gates.redact(summary, strict=True).text
             except Exception:

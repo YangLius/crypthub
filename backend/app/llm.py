@@ -68,7 +68,7 @@ _SUMMARY_RULES_ZH = (
 _SUMMARY_RULES_EN = (
     "You are a technical documentation assistant. Rules:\n"
     "1. Base every statement on the README only; never invent facts. "
-    "Write \"Not covered in README\" for aspects the README does not mention.\n"
+    'Write "Not covered in README" for aspects the README does not mention.\n'
     "2. Never output credentials, passwords, tokens or key-looking strings; "
     "keep placeholders in example code as-is.\n"
     "3. Output Markdown using exactly the required section headings."
@@ -76,12 +76,15 @@ _SUMMARY_RULES_EN = (
 
 _SUMMARY_TASK_ZH = (
     "请把以下 GitHub 项目 README 整理成一份中文说明文档，严格包含且仅包含"
-    "以下四个二级标题章节：\n\n"
+    "以下五个二级标题章节：\n\n"
+    "## 简介\n用中文概括项目定位与一句话价值主张；官方描述若为英文，"
+    "必须翻译成中文表达，不要保留英文原文。\n\n"
     "## 用途\n这个项目是做什么的、解决什么问题、核心价值（2-4 句）。\n\n"
     "## 核心特性\n3-8 条要点列表，突出最有区分度的能力。\n\n"
     "## 安装与使用\n从 README 提取环境要求、安装命令与快速上手步骤；"
     "给出 README 中的实际命令/配置/代码片段（用代码块保留）。\n\n"
     "## 适用场景\n谁适合用、什么情况下用、不适合什么场景（2-4 句）。\n\n"
+    "官方仓库描述：{desc}\n\n"
     "README 内容：\n\n{readme}"
 )
 
@@ -97,19 +100,27 @@ _SUMMARY_TASK_EN = (
     "snippets in fenced code blocks.\n\n"
     "## When to use it\nWho should use it, when to use it, and when not to "
     "(2-4 sentences).\n\n"
+    "Official repo description: {desc}\n\n"
     "README content:\n\n{readme}"
 )
 
 
-async def summarize_readme(readme: str, *, lang: str = "zh") -> str:
-    """把项目 README 提炼成结构化说明文档（用途/特性/使用方法）。
+async def summarize_readme(
+    readme: str, *, lang: str = "zh", desc: str = ""
+) -> str:
+    """把项目 README 提炼成结构化说明文档（简介/用途/特性/使用方法）。
 
-    lang: "zh" 中文文档 / "en" 英文文档。README 过长时截取前 16000 字符。
-    抛出异常由调用方处理（降级为原文摘录）。
+    lang: "zh" 中文文档（含中文简介段，官方英文描述会被翻译）/ "en" 英文文档。
+    desc 为 GitHub 官方仓库描述，作为提炼参考上下文。
+    README 过长时截取前 16000 字符。抛出异常由调用方处理（降级为原文摘录）。
     """
     text = readme[:16000]
     if lang == "en":
         return await complete(
-            _SUMMARY_RULES_EN, _SUMMARY_TASK_EN.format(readme=text)
+            _SUMMARY_RULES_EN,
+            _SUMMARY_TASK_EN.format(readme=text, desc=desc or "(none)"),
         )
-    return await complete(_SUMMARY_RULES_ZH, _SUMMARY_TASK_ZH.format(readme=text))
+    return await complete(
+        _SUMMARY_RULES_ZH,
+        _SUMMARY_TASK_ZH.format(readme=text, desc=desc or "（无）"),
+    )

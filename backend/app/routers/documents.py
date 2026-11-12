@@ -217,6 +217,33 @@ async def get_redacted_text(doc_id: str, request: Request):
     }
 
 
+def _stitch_join(texts: list[str]) -> str:
+    """按序拼接分块文本，并去除相邻分块间的重叠部分。
+
+    索引分块为保上下文会让每块携带前一块末尾约 80 字符（超长硬切也是
+    step = MAX_LEN - OVERLAP）；直接 join 会在阅读视图里出现重复段落。
+    这里对相邻块做尾部/头部精确匹配（窗口 200 字符，最短 20）去重；
+    无重叠（短文档逻辑切分）时按原文换行拼接。
+    """
+    out = ""
+    for t in texts:
+        if not t:
+            continue
+        if not out:
+            out = t
+            continue
+        window = min(200, len(out), len(t))
+        stitched = False
+        for k in range(window, 19, -1):
+            if out[-k:] == t[:k]:
+                out += t[k:]
+                stitched = True
+                break
+        if not stitched:
+            out += "\n" + t
+    return out
+
+
 @router.get("/{doc_id}/view")
 async def view_document(doc_id: str, request: Request):
     """在线查看文档正文（已索引的安全文本，非原始文件下载）。
@@ -241,7 +268,7 @@ async def view_document(doc_id: str, request: Request):
     )
     if not rows:
         raise HTTPException(404, "文档暂无可展示的正文")
-    text = "\n\n".join(r["text"] for r in rows)
+    text = _stitch_join([r["text"] for r in rows])
     truncated = False
     if len(text) > 500_000:
         text = text[:500_000]
