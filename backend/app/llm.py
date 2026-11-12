@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from . import sysconfig
 from .config import settings
 
 SYSTEM_PROMPT = (
@@ -17,8 +18,16 @@ SYSTEM_PROMPT = (
 
 
 async def chat(question: str, contexts: list[dict]) -> str:
-    """contexts: [{title, anchor, text}]。返回 LLM 回答文本。"""
-    base, key, model = settings.require_llm()
+    """contexts: [{title, anchor, text}]。返回 LLM 回答文本。
+
+    配置来源：system_settings 表覆盖 > .env 默认（sysconfig.effective()）。
+    """
+    cfg = await sysconfig.effective()
+    base = (cfg["llm_api_base"] or "").rstrip("/")
+    key = cfg["llm_api_key"] or ""
+    model = cfg["llm_model"] or ""
+    if not (base and key and model):
+        raise RuntimeError("LLM 未配置：请在密钥区 · 系统配置中填写 Base URL / API Key / 模型")
     blocks = []
     for i, c in enumerate(contexts, 1):
         blocks.append(f"[{i}] 《{c['title']}》 · {c['anchor']}\n{c['text']}")

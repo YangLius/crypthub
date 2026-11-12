@@ -26,6 +26,7 @@ import {
   aeadOpen,
 } from "../crypto/core";
 import { toast, toastErr, useApp } from "../store";
+import { SysConfigPanel } from "./SysConfigPanel";
 import { scan } from "../gates/redact";
 import {
   matchPendingsToLocal,
@@ -210,6 +211,7 @@ export default function SecretsPage() {
             paths={folderPathMap}
             onPickFolder={setFolder}
           />
+          {me.role === "admin" && <SysConfigPanel />}
         </div>
       </div>
     </div>

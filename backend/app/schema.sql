@@ -197,3 +197,12 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS client_redacted BOOLEAN NOT NULL 
 UPDATE documents d SET client_redacted = TRUE
  WHERE EXISTS (SELECT 1 FROM pending_secrets p
                WHERE p.source_doc_id = d.id AND p.source_hint LIKE '%上传预扫%');
+
+-- ---------- 系统运行时配置（2026-11-12）：管理员在密钥区 UI 查看/维护 LLM·嵌入·数据库 ----------
+-- 存在即覆盖 .env 默认值；删除行即恢复 .env 默认。仅限白名单键（见 app/sysconfig.py）。
+CREATE TABLE IF NOT EXISTS system_settings (
+    key        text PRIMARY KEY,
+    value      text NOT NULL,
+    updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);

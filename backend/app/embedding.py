@@ -12,7 +12,7 @@ import uuid
 
 import httpx
 
-from . import security
+from . import security, sysconfig
 from .config import settings
 
 EMBED_REQ_KEY = "kb:embed:req"
@@ -26,11 +26,16 @@ def _vec_text(v: list[float]) -> str:
 # ---------- openai_compat ----------
 
 
-async def _embed_via_api(texts: list[str]) -> list[list[float]]:
-    base = settings.embedding_api_base.rstrip("/")
-    headers = {"Authorization": f"Bearer {settings.embedding_api_key}"}
-    payload: dict = {"model": settings.embedding_model, "input": texts}
-    if settings.embedding_api_send_dims:
+async def _embed_via_api(
+    texts: list[str], cfg: dict[str, str] | None = None
+) -> list[list[float]]:
+    cfg = cfg or await sysconfig.effective()
+    base = (cfg.get("embedding_api_base") or settings.embedding_api_base).rstrip("/")
+    key = cfg.get("embedding_api_key") or settings.embedding_api_key
+    model = cfg.get("embedding_model") or settings.embedding_model
+    headers = {"Authorization": f"Bearer {key}"}
+    payload: dict = {"model": model, "input": texts}
+    if (cfg.get("embedding_api_send_dims") or "").lower() == "true":
         payload["dimensions"] = settings.embedding_dim
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(f"{base}/embeddings", headers=headers, json=payload)
@@ -82,13 +87,22 @@ async def _embed_via_worker(texts: list[str]) -> list[list[float]]:
     return data["vectors"]
 
 
-async def embed_texts(texts: list[str]) -> list[list[float]]:
-    """api / worker 通用入口（异步；worker 在自己事件循环内 await 调用）。"""
+async def embed_texts(
+    texts: list[str], cfg: dict[str, str] | None = None
+) -> list[list[float]]:
+    """api / worker 通用入口（异步；worker 在自己事件循环内 await 调用）。
+
+    cfg 缺省时自动读取 system_settings 覆盖后的生效配置。
+    """
     if not texts:
         return []
-    if settings.embedding_provider == "openai_compat":
+    if cfg is None:
+        cfg = await sysconfig.effective()
+    if cfg.get("embedding_provider") == "openai_compat":
         out: list[list[float]] = []
         for i in range(0, len(texts), settings.embedding_batch):
-            out.extend(await _embed_via_api(texts[i : i + settings.embedding_batch]))
+            out.extend(
+                await _embed_via_api(texts[i : i + settings.embedding_batch], cfg)
+            )
         return out
     return await _embed_via_worker(texts)

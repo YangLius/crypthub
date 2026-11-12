@@ -42,6 +42,9 @@ ACTIONS = {
         "pending_claimed",
         "group_created",
         "group_members_set",
+        "system_config_revealed",
+        "system_config_updated",
+        "system_config_db_updated",
 }
 
 

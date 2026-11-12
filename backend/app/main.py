@@ -12,7 +12,17 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db, security
 from .config import settings
-from .routers import admin, auth, chat, dify, documents, folders, search, secrets
+from .routers import (
+    admin,
+    auth,
+    chat,
+    dify,
+    documents,
+    folders,
+    search,
+    secrets,
+    sysconfig,
+)
 from .routers import audit as audit_router
 
 app = FastAPI(
@@ -54,6 +64,7 @@ async def _spa_navigation_preempt(request: Request, call_next):
 
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(sysconfig.router)
 app.include_router(documents.router)
 app.include_router(folders.router)
 app.include_router(search.router)
