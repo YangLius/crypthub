@@ -28,6 +28,7 @@ import {
 import { toast, toastErr, useApp } from "../store";
 import { scan } from "../gates/redact";
 import {
+  findPairedHit,
   matchPendingsToLocal,
   peekPrescanHit,
   removePrescanHit,
@@ -580,19 +581,32 @@ function SecretList(props: {
         <CreateModal
           myUserId={me.user_id}
           pendingRow={creating.row}
-          defaultFolderSel={activeFolder && activeFolder !== "root" ? activeFolder : ""}
+          defaultFolderSel={
+            activeFolder && activeFolder !== "root" ? activeFolder : ""
+          }
           onClose={() => setCreating(null)}
-          onDone={(sid) => {
+          onDone={(sid, pairedSlug) => {
             setCreating(null);
             // 归档目录由 CreateModal 内部处理（新建=弹窗内选择；认领=镜像源文档路径）
             void refresh();
             const claimed = creating.row;
-            // 只认领“正在认领”的那条 pending（此前误认领 pending[0]，会张冠李戴）
             if (sid && claimed) {
+              // 成对认领：配对的那条 pending（另一条 slug）也挂到同一条密钥上销掉
+              const paired = pairedSlug
+                ? pending.find((x) => x.slug === pairedSlug)
+                : undefined;
+              const dropIds = new Set(
+                [claimed.id, paired?.id].filter(Boolean) as string[],
+              );
               void api.post(`/secrets/pending/${claimed.id}/claim`, {
                 secret_id: sid,
               });
-              onPendingChange(pending.filter((x) => x.id !== claimed.id));
+              if (paired) {
+                void api.post(`/secrets/pending/${paired.id}/claim`, {
+                  secret_id: sid,
+                });
+              }
+              onPendingChange(pending.filter((x) => !dropIds.has(x.id)));
             }
           }}
         />
@@ -955,7 +969,7 @@ function CreateModal({
   pendingRow: PendingRow | null; // 从待认领进入时非空
   defaultFolderSel: string; // 新建条目的默认归档目录（uuid；空串=未归档）
   onClose: () => void;
-  onDone: (secretId: string) => void;
+  onDone: (secretId: string, pairedSlug?: string) => void;
 }) {
   const { me } = useApp();
   const secFolders = useFolders("secret", 0);
@@ -970,21 +984,28 @@ function CreateModal({
   const [tags, setTags] = useState("");
   const [content, setContent] = useState<SecretContent>({ ...EMPTY_CONTENT });
   const [cachedHit, setCachedHit] = useState<CachedHit | null>(null);
+  // 配对的另一条命中（用户名↔密码成对认领）；创建成功后一并从待认领清单销掉
+  const [cachedPair, setCachedPair] = useState<CachedHit | null>(null);
   const [tplId, setTplId] = useState<TemplateId>("login");
   // 认领时把源文档的目录链镜像到密钥区（逐级 find-or-create），归档到最深层
   const [mirror, setMirror] = useState<MirroredFolder | null>(null);
 
-  // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段
+  // 认领回填：本机预扫缓存里有该 slug 的命中原文时，自动填名称/项目/内容字段；
+  // 用户名↔密码配对的另一条也一并回填（成对认领，类型自动选“用户名密码”）
   useEffect(() => {
     if (!pendingRow) return;
     const hit = peekPrescanHit(pendingRow.slug);
     if (!hit) return;
+    const paired = findPairedHit(pendingRow.slug);
     setCachedHit(hit);
+    setCachedPair(paired);
     if (hit.title) setName(hit.title);
     if (hit.project) setProject(hit.project);
-    const fields = suggestFields(hit);
-    setContent((c) => ({ ...c, ...fields }));
-    setTplId(guessTemplate({ ...EMPTY_CONTENT, ...fields }));
+    const merged = paired
+      ? { ...suggestFields(hit), ...suggestFields(paired) }
+      : suggestFields(hit);
+    setContent((c) => ({ ...c, ...merged }));
+    setTplId(guessTemplate({ ...EMPTY_CONTENT, ...merged }));
   }, [pendingRow]);
 
   // 解析源文档目录链并镜像到密钥区；失败不阻塞（mirror 保持 null → 不归档）
@@ -1037,8 +1058,11 @@ function CreateModal({
         folderId: pendingRow ? mirror?.id : targetFolder || undefined,
       });
       if (pendingRow) removePrescanHit(pendingRow.slug); // 认领成功即删本机缓存
-      toast("已创建（内容仅存密文）");
-      onDone(sid);
+      if (cachedPair) removePrescanHit(cachedPair.slug); // 配对命中一并删除
+      toast(
+        cachedPair ? "已创建（用户名+密码成对认领，内容仅存密文）" : "已创建（内容仅存密文）",
+      );
+      onDone(sid, cachedPair?.slug);
     } catch (e) {
       toastErr(e instanceof Error ? e.message : "创建失败");
     } finally {
@@ -1056,7 +1080,9 @@ function CreateModal({
             {" "}
             认领占位符：<code>{`{{secret:${pendingRow.slug}}}`}</code>
             {cachedHit
-              ? "（已自动填入上传预扫时的命中值，请核对后提交；提交后本机缓存即删除）"
+              ? cachedPair
+                ? "（已自动成对填入上传预扫时的用户名+密码，请核对后提交；提交后两条待认领一并销掉）"
+                : "（已自动填入上传预扫时的命中值，请核对后提交；提交后本机缓存即删除）"
               : "（服务端从不保存命中原文，本机缓存中也没有该值，请凭记忆填入）"}
           </>
         )}

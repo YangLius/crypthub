@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  findPairedHit,
   peekPrescanHit,
   removePrescanHit,
   savePrescanHits,
@@ -195,5 +196,79 @@ describe("matchPendingsToLocal 上下文配对", () => {
     );
     expect(total).toBe(2);
     expect(pairs.size).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("用户名↔密码成对认领（findPairedHit）", () => {
+  const up = (slug: string, value: string) => ({
+    slug,
+    kind: "kv",
+    value,
+  });
+  const saveBatch = (
+    rows: { slug: string; kind: string; value: string }[],
+    title = "运维手册",
+  ) => savePrescanHits(rows.map((r) => ({ ...r })) as never[], title, "billing");
+
+  it("相邻的用户名+密码配成一对（顺序两种都支持）", () => {
+    saveBatch([
+      up("u1", "用户名：admin"),
+      up("p1", "密码：Xx123456$"),
+    ]);
+    expect(findPairedHit("u1")?.slug).toBe("p1");
+    expect(findPairedHit("p1")?.slug).toBe("u1");
+
+    store.clear();
+    saveBatch([
+      up("p2", "密码：Xx123456$"),
+      up("u2", "账号：root"),
+    ]);
+    expect(findPairedHit("p2")?.slug).toBe("u2");
+    expect(findPairedHit("u2")?.slug).toBe("p2");
+  });
+
+  it("两组凭据全局贪心不跨组（user1-pass1 / user2-pass2）", () => {
+    saveBatch([
+      up("u1", "用户名：admin"),
+      up("p1", "密码：Pass1abc$"),
+      up("u2", "账号：root"),
+      up("p2", "密码：Pass2def$"),
+    ]);
+    expect(findPairedHit("u1")?.slug).toBe("p1");
+    expect(findPairedHit("p1")?.slug).toBe("u1");
+    expect(findPairedHit("u2")?.slug).toBe("p2");
+    expect(findPairedHit("p2")?.slug).toBe("u2");
+  });
+
+  it("非用户名/密码的 kv 与前缀类命中不参与配对", () => {
+    saveBatch([
+      up("k1", "access_key: AKIAIOSFODNN7EXAMPLE"),
+      up("s1", "sk-proj-abcdefghijklmnop"),
+      up("u3", "用户名：admin"),
+    ]);
+    expect(findPairedHit("k1")).toBeNull();
+    expect(findPairedHit("s1")).toBeNull();
+    expect(findPairedHit("u3")).toBeNull();
+  });
+
+  it("旧缓存（无 pair 字段）按同标题相邻互补兜底配对", () => {
+    // 模拟存量：分两次单独保存（各自批内无配对），靠相邻+同标题兜底
+    saveBatch([up("lu", "用户名：legacy")]);
+    saveBatch([up("lp", "密码：Legacy99$")]);
+    expect(findPairedHit("lu")?.slug).toBe("lp");
+    expect(findPairedHit("lp")?.slug).toBe("lu");
+  });
+
+  it("不同标题的相邻命中不误配", () => {
+    saveBatch([up("tu", "用户名：admin")], "文档A");
+    saveBatch([up("tp", "密码：Xx123456$")], "文档B");
+    expect(findPairedHit("tu")).toBeNull();
+    expect(findPairedHit("tp")).toBeNull();
+  });
+
+  it("认领删除自身后配对方也不再被找到", () => {
+    saveBatch([up("u9", "用户名：admin"), up("p9", "密码：Xx123456$")]);
+    removePrescanHit("u9");
+    expect(findPairedHit("p9")).toBeNull();
   });
 });

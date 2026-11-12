@@ -16,6 +16,8 @@ export interface CachedHit {
  value: string;
  title: string;
  project: string;
+ /** 同批扫描中配对的另一条命中 slug（用户名↔密码成对认领） */
+ pair?: string;
 }
 
 const KEY = "kb_prescan_hits";
@@ -39,13 +41,56 @@ function save(list: CachedHit[]): void {
  }
 }
 
+/** 从 kv 命中值（整行“键：值”）归类出用户名/密码字段，非成对候选返回 null。 */
+function loginFieldOf(hit: {
+ kind: string;
+ value: string;
+}): "username" | "password" | null {
+ if (hit.kind !== "kv") return null;
+ const patch = suggestFields(hit);
+ if (patch.username) return "username";
+ if (patch.password) return "password";
+ return null;
+}
+
+/**
+ * 同批扫描命中内计算用户名↔密码配对（纯函数，便于单测）。
+ * 规则：相邻（数组顺序=文本顺序）且互补的一对 kv 命中配为一组；
+ * 用户名优先向右找、密码优先向左找（兼容“密码在前”的写法），
+ * 全局贪心去重，避免 user1-pass1-user2-pass2 里密码跨组误配。
+ */
+function computeBatchPairs(hits: ResolvedPending[]): Map<string, string> {
+ const fields = hits.map((h) => ({ slug: h.slug, f: loginFieldOf(h) }));
+ const pairs = new Map<string, string>();
+ for (let i = 0; i < fields.length; i++) {
+  const cur = fields[i];
+  if (!cur.f || pairs.has(cur.slug)) continue; // 已配对的不再重配（防跨组）
+  const order = cur.f === "username" ? [i + 1, i - 1] : [i - 1, i + 1];
+  for (const j of order) {
+   const o = fields[j];
+   if (o && o.f && o.f !== cur.f && !pairs.has(o.slug)) {
+    pairs.set(cur.slug, o.slug);
+    pairs.set(o.slug, cur.slug);
+    break;
+   }
+  }
+ }
+ return pairs;
+}
+
 export function savePrescanHits(
  hits: ResolvedPending[],
  title: string,
  project: string,
 ): void {
  if (!hits.length) return;
- const extra = hits.map((h) => ({ ...h, title, project }));
+ const pairs = computeBatchPairs(hits);
+ const extra = hits.map((h) => ({
+  ...h,
+  title,
+  project,
+  pair: pairs.get(h.slug),
+ }));
  save([
   ...load().filter((h) => !hits.some((n) => n.slug === h.slug)),
   ...extra,
@@ -58,6 +103,32 @@ export function peekPrescanHit(slug: string): CachedHit | null {
 
 export function removePrescanHit(slug: string): void {
  save(load().filter((h) => h.slug !== slug));
+}
+
+/**
+ * 成对认领：取该 slug 配对的另一条命中（用户名↔密码）。
+ * 优先用保存时计算的显式 pair；旧缓存（无 pair 字段）按“同标题相邻互补”兼底，
+ * 让老上传（KV 中文键修复前后的存量）也能成对回填。
+ */
+export function findPairedHit(slug: string): CachedHit | null {
+ const list = load();
+ const self = list.find((h) => h.slug === slug);
+ if (!self) return null;
+ if (self.pair) {
+  const p = list.find((h) => h.slug === self.pair);
+  if (p) return p;
+ }
+ const idx = list.indexOf(self);
+ const selfField = loginFieldOf(self);
+ if (selfField === null) return null;
+ const order = selfField === "username" ? [idx + 1, idx - 1] : [idx - 1, idx + 1];
+ for (const i of order) {
+  const h = list[i];
+  if (!h || h.title !== self.title) continue;
+  const f = loginFieldOf(h);
+  if (f && f !== selfField) return h;
+ }
+ return null;
 }
 
 export type ContentPatch = Partial<
